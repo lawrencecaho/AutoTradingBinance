@@ -1,46 +1,60 @@
 # calculator.py
 
-from database import Session, Price, BuyHistory, PriceDiff
+from database import Session, engine
 from config import SYMBOL
 import argparse
+from sqlalchemy import Table, MetaData
 
-# 动态获取表名
-Price.__tablename__ = f'price_data_{SYMBOL.lower()}'
-BuyHistory.__tablename__ = f'buy_history_{SYMBOL.lower()}'
-PriceDiff.__tablename__ = f'price_diff_{SYMBOL.lower()}'
+metadata = MetaData()
+Price = Table(
+    f"price_data_{SYMBOL.lower()}",
+    metadata,
+    autoload_with=engine
+)
+BuyHistory = Table(
+    f"buy_history_{SYMBOL.lower()}",
+    metadata,
+    autoload_with=engine
+)
+PriceDiff = Table(
+    f"price_diff_{SYMBOL.lower()}",
+    metadata,
+    autoload_with=engine
+)
 
+# calculate_diff 函数：计算最新价格与最后一次买入价格的差值
+# 参数：无
+# 功能：
+# 1. 查询数据库中最新的价格记录
+# 2. 查询数据库中最后一次买入记录
+# 3. 计算价格差值并存储到数据库中
+# 4. 打印价格差值信息
+# 注意：如果没有价格记录或买入记录，函数会提前返回
 def calculate_diff():
     session = Session()
-
-    # 获取最新价格
-    current_price = session.query(Price).order_by(Price.timestamp.desc()).first()
+    current_price = session.query(Price).order_by(Price.c.timestamp.desc()).first()
     if current_price:
         print(f"[Calculator] Current price: {current_price.price}")
     else:
         print("[Calculator] No current price data available.")
         session.close()
         return
-    # 获取最后一次买入记录
-    last_buy = session.query(BuyHistory).order_by(BuyHistory.timestamp.desc()).first()
+
+    last_buy = session.query(BuyHistory).order_by(BuyHistory.c.timestamp.desc()).first()
     if last_buy:
         print(f"[Calculator] Last buy price: {last_buy.price}")
     else:
         print("[Calculator] No buy history available.")
         session.close()
         return
-    # 计算差额
 
     if current_price and last_buy:
         diff = current_price.price - last_buy.price
-
-        # 写入差额记录
-        diff_entry = PriceDiff(diff=diff, current_price=current_price.price, buy_price=last_buy.price)
-        session.add(diff_entry)
+        diff_entry = PriceDiff.insert().values(diff=diff, current_price=current_price.price, buy_price=last_buy.price)
+        session.execute(diff_entry)
         session.commit()
 
         print(f"[Calculator] Price diff: {diff:.2f}")
-    else:
-        print("[Calculator] Not enough data to calculate diff.")
 
     session.close()
 

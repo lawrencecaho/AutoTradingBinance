@@ -1,20 +1,36 @@
 # fetcher.py
 
 import requests
-from database import Session, Price, init_db
-from config import SYMBOL
+from database import Session, init_db, engine
+from config import SYMBOL, StableUrl
 import argparse
 import time
 from config import FETCH_INTERVAL_SECONDS
 import sys
 import select
+from sqlalchemy import Table, MetaData
 
-# fetch_price 函数从 Binance API 获取最新价格并存储到数据库
-# 如果需要扩展功能，可以在此函数中添加更多逻辑
+# 修改 fetch_price 函数以支持动态表名
+metadata = MetaData()
+Price = Table(
+    f"price_data_{SYMBOL.lower()}",
+    metadata,
+    autoload_with=engine
+)
+
+# fetch_price 函数：从 Binance API 获取最新价格并存储到数据库
+# 参数：无
+# 返回值：存储的价格值
+# 功能：
+# 1. 构造 API 请求 URL
+# 2. 发送 HTTP GET 请求获取价格数据
+# 3. 将价格数据存储到数据库中
+# 4. 打印存储的价格信息
+# 5. 返回存储的价格值
 
 def fetch_price():
-    # 构造 Binance API 的请求 URL
-    url = f'https://api.binance.com/api/v3/ticker/price?symbol={SYMBOL}'
+    # 基于变量构造 API 的请求 URL
+    url = f'{StableUrl}/price?symbol={SYMBOL}'
     
     # 发送 HTTP GET 请求以获取最新价格数据
     response = requests.get(url)
@@ -27,8 +43,8 @@ def fetch_price():
     session = Session()
     
     # 创建价格记录并添加到数据库会话中
-    price_entry = Price(symbol=SYMBOL, price=price)
-    session.add(price_entry)
+    price_entry = Price.insert().values(symbol=SYMBOL, price=price)
+    session.execute(price_entry)
     
     # 提交事务以保存数据到数据库
     session.commit()
