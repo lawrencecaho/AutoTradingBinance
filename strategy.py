@@ -74,6 +74,5 @@ def should_trade():
         logging.info(f"[Strategy] Decision: {decision[0]} at price {decision[1]}")
     else:
         logging.info("[Strategy] No trade decision.")
-
-    Session.close() # 重点关注
+    
     return decision

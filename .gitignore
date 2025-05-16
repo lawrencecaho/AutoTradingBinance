@@ -2,3 +2,5 @@ config.py
 .vscode/
 __pycache__/
 .vscode/settings.json
+Secret/PythonT1.sh
+Secret

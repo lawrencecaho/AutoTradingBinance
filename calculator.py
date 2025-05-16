@@ -4,6 +4,7 @@ from database import Session, engine
 from config import SYMBOL
 import argparse
 from sqlalchemy import Table, MetaData
+from datetime import datetime, timezone
 
 metadata = MetaData()
 Price = Table(
@@ -50,7 +51,12 @@ def calculate_diff():
 
     if current_price and last_buy:
         diff = current_price.price - last_buy.price
-        diff_entry = PriceDiff.insert().values(diff=diff, current_price=current_price.price, buy_price=last_buy.price)
+        diff_entry = PriceDiff.insert().values(
+            diff=diff,
+            current_price=current_price.price,
+            buy_price=last_buy.price,
+            timestamp=datetime.now(timezone.utc)
+        )
         session.execute(diff_entry)
         session.commit()
 

@@ -1,11 +1,21 @@
-crypto_trader/
-├── config.py              # 配置文件：API密钥、数据库配置等
-├── database.py            # 数据库连接与模型定义
-├── fetcher.py             # 第一步：价格采集
-├── calculator.py          # 第二步：差额计算
-├── strategy.py            # 第三步：策略判断
-├── trader.py              # 第四步：交易执行
-└── main.py                # 主程序，调用调度各模块
+# 原有结构已被颠覆，说明 TODO 中
+***
+## About funtion get_kline()
+| 字段名                   | 含义           | 数据类型            |
+| --------------------- | ------------ | --------------- |
+| `open_time`           | 开盘时间（毫秒时间戳）  | `int`           |
+| `open`                | 开盘价          | `str` → `float` |
+| `high`                | 最高价          | `str` → `float` |
+| `low`                 | 最低价          | `str` → `float` |
+| `close`               | 收盘价          | `str` → `float` |
+| `volume`              | 成交量（以币为单位）   | `str` → `float` |
+| `close_time`          | 收盘时间（毫秒时间戳）  | `int`           |
+| `quote_asset_volume`  | 成交额（以计价币为单位） | `str` → `float` |
+| `num_trades`          | 成交笔数         | `int`           |
+| `taker_buy_base_vol`  | 主动买入成交量      | `str` → `float` |
+| `taker_buy_quote_vol` | 主动买入成交额      | `str` → `float` |
+| `ignore`              | 保留字段         | `str` → 忽略      |
+
 
 # 数据结构
 ## 数据表
