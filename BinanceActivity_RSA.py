@@ -1,4 +1,3 @@
-
 # BinanceActivity_RSA.py
 # 使用 RSA 签名与 Binance Testnet 通信
 # 功能包括：获取账户余额、提交限价买单、查看当前挂单
@@ -9,6 +8,7 @@ import urllib.parse
 import requests
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.backends import default_backend
 from config import BINANCE_API_KEY, BINANCE_PRIVATE_KEY_PATH
 
 # ==== 账户配置 ====
@@ -18,7 +18,15 @@ PRIVATE_KEY_PATH = BINANCE_PRIVATE_KEY_PATH
 # ==== 通用签名函数 ====
 def rsa_sign(query_string: str, private_key_path: str) -> str:
     with open(private_key_path, 'rb') as key_file:
-        private_key = serialization.load_pem_private_key(key_file.read(), password=None)
+        private_key = serialization.load_pem_private_key(
+            key_file.read(),
+            password=None,
+            backend=default_backend()
+        )
+    # 检查密钥类型
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    if not isinstance(private_key, rsa.RSAPrivateKey):
+        raise TypeError("私钥类型不是 RSA，请检查密钥文件！")
     signature = private_key.sign(
         query_string.encode('utf-8'),
         padding.PKCS1v15(),

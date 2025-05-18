@@ -65,6 +65,42 @@ def generate_custom_id(session, table):
     sn_str = f"{new_sn:08d}"
     return f"{today_str}{sn_str}"
 
+def dbinsert_common(session, table, var, value, **kwargs):
+    """
+    插入表中指定字段的记录
+    """
+    custom_id = generate_custom_id(session, table)
+    entry = table.insert().values(
+        id=custom_id,
+        **{var: value, **kwargs}
+    )
+    session.execute(entry)
+    session.commit()
+    return custom_id
+def dbelete_common(session, table, var, value):
+    """
+    删除表中指定字段的记录
+    """
+    delete_entry = table.delete().where(table.c[var] == value)
+    session.execute(delete_entry)
+    session.commit()
+    return True
+def dbupdate_common(session, table, var, value, **kwargs):
+    """
+    更新表中指定字段的记录
+    """
+    update_entry = table.update().where(table.c[var] == value).values(**kwargs)
+    session.execute(update_entry)
+    session.commit()
+    return True
+def dbselect_common(session, table, var, value):
+    """
+    查询表中指定字段的记录
+    """
+    select_entry = table.select().where(table.c[var] == value)
+    result = session.execute(select_entry).fetchall()
+    return result
+
 def insert_price(session, Price, symbol, price, timestamp):
     """
     插入价格数据，id为自定义格式（字符串）

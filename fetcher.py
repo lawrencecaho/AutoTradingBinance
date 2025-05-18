@@ -6,8 +6,9 @@ import select
 import sys
 import time
 from datetime import datetime, timezone
-from config import FETCH_INTERVAL_SECONDS, StableUrl, SYMBOL
+from config import dbget_option, StableUrl, SYMBOL
 from database import Session, engine, init_db, insert_price, insert_kline
+from DataModificationModule import parse_kline
 
 def fetch_price(Price):
     """
@@ -66,18 +67,13 @@ if __name__ == '__main__':
                 print(f"[Fetcher] Fetched price: {price}")
 
         # 等待指定的时间间隔
-        time.sleep(FETCH_INTERVAL_SECONDS)
+        timeset = dbget_option("FETCH_INTERVAL_SECONDS", cast_type=int)
+        if timeset is None:
+            timeset = 120  # 默认间隔
+        time.sleep(float(timeset))
 
 # K Line
-KLINE_FIELDS = [
-    'open_time', 'open', 'high', 'low', 'close', 'volume',
-    'close_time', 'quote_asset_volume', 'num_trades',
-    'taker_buy_base_vol', 'taker_buy_quote_vol', 'ignore'
-]
-
-def parse_kline(raw):
-    return dict(zip(KLINE_FIELDS, raw))
-
+# 需要(symbol, interval, dbr=False, session=None, table=None,startTime=None, endTime=None, limit=100)
 def get_kline(symbol, interval, dbr, session, table,
               startTime=None, endTime=None, limit=100):
     """

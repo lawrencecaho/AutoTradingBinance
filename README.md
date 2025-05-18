@@ -1,6 +1,6 @@
 # 原有结构已被颠覆，说明 TODO 中
 ***
-## About funtion get_kline()
+# About funtion get_kline()
 | 字段名                   | 含义           | 数据类型            |
 | --------------------- | ------------ | --------------- |
 | `open_time`           | 开盘时间（毫秒时间戳）  | `int`           |
@@ -15,6 +15,21 @@
 | `taker_buy_base_vol`  | 主动买入成交量      | `str` → `float` |
 | `taker_buy_quote_vol` | 主动买入成交额      | `str` → `float` |
 | `ignore`              | 保留字段         | `str` → 忽略      |
+## 对于数据库
+| 字段名                   | 类型                         | 说明              |
+| --------------------- | -------------------------- | --------------- |
+| `id`                  | `TEXT`                     | 主键，自定义生成        |
+| `symbol`              | `TEXT`                     | 币种对名（如 BTCUSDT） |
+| `open` \~ `close`     | `NUMERIC(20, 8)`           | 价格字段，最高支持小数点8位  |
+| `volume`              | `NUMERIC(30, 10)`          | 成交量，10位小数更安全    |
+| `open_time`           | `TIMESTAMP WITH TIME ZONE` | K 线开始时间         |
+| `close_time`          | `TIMESTAMP WITH TIME ZONE` | K 线结束时间         |
+| `quote_asset_volume`  | `NUMERIC(30, 10)`          | 成交额（以 USDT 计）   |
+| `num_trades`          | `INTEGER`                  | 成交笔数            |
+| `taker_buy_base_vol`  | `NUMERIC(30, 10)`          | 主动买入币数量         |
+| `taker_buy_quote_vol` | `NUMERIC(30, 10)`          | 主动买入金额          |
+| `ignore`              | `TEXT`                     | Binance 暂无用字段   |
+| `timestamp`           | `TIMESTAMP WITH TIME ZONE` | 插入时间，默认当前 UTC   |
 
 
 # 数据结构
