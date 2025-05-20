@@ -39,5 +39,5 @@ def main():
 
 if __name__ == "__main__":
     port = int(os.getenv("API_PORT", "8000"))
-    uvicorn.run("doapi.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("myfastapi.main:app", host="0.0.0.0", port=8000, reload=True)
     main()

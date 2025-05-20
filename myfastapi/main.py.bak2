@@ -1,0 +1,376 @@
+import sys
+import os
+
+# 添加父目录到 Python 路径
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from myfastapi.auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from myfastapi.authtotp import verify_totp as verify_totp_code
+from myfastapi.security import (
+    decrypt_data,
+    encrypt_data,
+    verify_security_headers,
+    verify_signature,
+    get_security_info,
+    PRIVATE_KEY,
+    PUBLIC_KEY
+)
+    decrypt_data,
+    encrypt_data,
+    verify_security_headers,
+    verify_signature,
+    sign_data,
+    get_security_info,
+    PRIVATE_KEY,
+    PUBLIC_KEY
+)
+from pathlib import Path
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from cryptography.hazmat.primitives.asymmetric import rsa, padding, utils
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.backends import default_backend
+import pyotp
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from database import Session, dbselect_common
+from datetime import timedelta
+from auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from .authtotp import verify_totp as verify_totp_code
+from .security import (
+    decrypt_data,
+    encrypt_data,
+    verify_security_headers,
+    verify_signature,
+    get_security_info,
+    PRIVATE_KEY,
+    PUBLIC_KEY
+)
+import base64
+import json
+import time
+from typing import Dict, Any
+import logging
+
+# 配置更详细的日志记录
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    filename='app.log',
+    filemode='w'
+)
+logger = logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """处理应用程序的启动和关闭事件"""
+    try:
+        logger.info("Validating configuration...")
+        required_env_vars = [
+            "JWT_SECRET",
+            "API_SECRET_KEY",
+            "DATABASE_URL"
+        ]
+        
+        missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+        if missing_vars:
+            error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+            
+        # 验证数据库连接
+        try:
+            with Session() as session:
+                session.connection()
+            logger.info("Successfully verified database connection")
+        except Exception as e:
+            logger.error(f"Database connection failed: {str(e)}")
+            raise
+        
+    except Exception as e:
+        logger.error(f"Configuration validation failed: {str(e)}")
+        raise
+
+    yield
+
+    logger.info("Shutting down application...")
+
+# 创建 FastAPI 应用实例
+app = FastAPI(
+    title="Secure API Backend",
+    lifespan=lifespan
+)
+
+# 添加CORS中间件以允许前端访问
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 在生产环境中应该限制为实际的前端域名
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 定义密钥存储路径
+KEY_DIRECTORY = Path(__file__).parent.parent / 'Secret'
+PRIVATE_KEY_PATH = KEY_DIRECTORY / 'fastapi-private.pem'
+PUBLIC_KEY_PATH = KEY_DIRECTORY / 'fastapi-public.pem'
+
+def load_or_generate_keys():
+    """加载或生成RSA密钥对"""
+    try:
+        # 尝试加载现有密钥
+        if PRIVATE_KEY_PATH.exists() and PUBLIC_KEY_PATH.exists():
+            with open(PRIVATE_KEY_PATH, 'rb') as private_file:
+                private_key = serialization.load_pem_private_key(
+                    private_file.read(),
+                    password=None,
+                    backend=default_backend()
+                )
+            with open(PUBLIC_KEY_PATH, 'rb') as public_file:
+                public_key = serialization.load_pem_public_key(
+                    public_file.read(),
+                    backend=default_backend()
+                )
+            return private_key, public_key
+
+        # 如果密钥不存在，生成新密钥对
+        private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+            backend=default_backend()
+        )
+        public_key = private_key.public_key()
+
+        # 确保目录存在
+        KEY_DIRECTORY.mkdir(parents=True, exist_ok=True)
+
+        # 保存私钥
+        private_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+        with open(PRIVATE_KEY_PATH, 'wb') as f:
+            f.write(private_pem)
+
+        # 保存公钥
+        public_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        with open(PUBLIC_KEY_PATH, 'wb') as f:
+            f.write(public_pem)
+
+        return private_key, public_key
+    except Exception as e:
+        raise RuntimeError(f"密钥生成或加载失败: {str(e)}")
+
+# 初始化密钥
+PRIVATE_KEY, PUBLIC_KEY = load_or_generate_keys()
+
+# 请求模型
+class SecureRequest(BaseModel):
+    encrypted_data: str
+    timestamp: int
+    signature: str | None = None  # 客户端签名可选
+
+# 响应模型
+class EncryptedResponse(BaseModel):
+    data: str
+    timestamp: int
+    signature: str
+
+# 安全信息接口
+@app.get("/security-info")
+async def security_info():
+    """获取加密相关的公共信息"""
+    return get_security_info()
+
+# 解密请求数据的依赖项
+async def decrypt_request_data(request: SecureRequest) -> Dict[str, Any]:
+    # 验证时间戳是否在有效期内
+    current_time = int(time.time() * 1000)  # 转换为毫秒
+    if current_time - request.timestamp > 60000:  # 60秒超时
+        raise HTTPException(status_code=401, detail="请求已过期")
+    
+    # 解码Base64加密数据
+    try:
+        encrypted_data_bytes = base64.b64decode(request.encrypted_data)
+        
+        # 使用私钥解密数据
+        if not isinstance(PRIVATE_KEY, rsa.RSAPrivateKey):
+            raise ValueError("私钥类型不正确，需要 RSA 私钥")
+        
+        padding_algorithm = padding.OAEP(
+            mgf=padding.MGF1(hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+        
+        decrypted_data = PRIVATE_KEY.decrypt(
+            encrypted_data_bytes,
+            padding_algorithm
+        )
+        
+        # 解析JSON数据
+        data = json.loads(decrypted_data.decode('utf-8'))
+        return data
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"解密失败: {str(e)}")
+    
+
+# 加密响应数据的函数
+def encrypt_response(response_data: Dict[str, Any]) -> EncryptedResponse:
+    """加密响应数据并生成签名"""
+    current_timestamp = int(time.time() * 1000)
+    
+    try:
+        # 将响应数据转换为JSON字符串并加密
+        json_data = json.dumps(response_data)
+        encrypted_data = encrypt_data(json_data)
+        
+        # 生成签名
+        signature = sign_data(encrypted_data, str(current_timestamp))
+        
+        return EncryptedResponse(
+            data=encrypted_data,
+            timestamp=current_timestamp,
+            signature=signature
+        )
+    except Exception as e:
+        logger.error(f"加密响应失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"加密响应失败: {str(e)}")
+
+@app.post("/verify-otp")
+async def verify_otp(
+    request: SecureRequest,
+    security_headers: dict = Depends(verify_security_headers)
+):
+    # 验证签名
+    verify_signature(
+        request.encrypted_data,
+        str(request.timestamp),
+        request.signature or ""
+    )
+    
+    # 解密数据
+    try:
+        decrypted_data = decrypt_data(request.encrypted_data)
+        data = json.loads(decrypted_data)
+        if not isinstance(data, dict) or "code" not in data or "uid" not in data:
+            raise HTTPException(status_code=400, detail="Invalid request data format")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Failed to decrypt data")
+
+    session = Session()
+    try:
+        # 使用解密后的数据进行验证
+        result = dbselect_common(session, "userbasic", "uid", data["uid"])
+        if not result:
+            return {
+                "verified": False,
+                "message": "用户不存在"
+            }
+
+        user = result[0]
+        if not user.totpsecret:
+            return {
+                "verified": False,
+                "message": "未找到用户密钥"
+            }
+
+        # 使用 authtotp 模块验证 OTP
+        if verify_totp_code(data["uid"], data["code"]):
+            # 创建访问令牌
+            access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+            access_token = create_access_token(
+                data={"sub": user.uid},
+                expires_delta=access_token_expires
+            )
+            
+            # 验证成功，返回用户信息和令牌
+            response_data = {
+                "verified": True,
+                "token": access_token,
+                "user": {
+                    "uid": user.uid,
+                    "name": user.username if hasattr(user, 'username') else ""
+                }
+            }
+            
+            # 对响应进行加密和签名
+            return encrypt_response(response_data)
+        else:
+            return {
+                "verified": False,
+                "message": "验证码错误"
+            }
+    finally:
+        session.close()
+
+@app.post("/tradingcommand")
+async def trading_config(
+    request: SecureRequest,
+    security_headers: dict = Depends(verify_security_headers)
+):
+    """处理加密的交易命令"""
+    # 验证签名
+    verify_signature(
+        request.encrypted_data,
+        str(request.timestamp),
+        request.signature or ""
+    )
+    
+    # 解密数据
+    try:
+        decrypted_data = decrypt_data(request.encrypted_data)
+        trading_data = json.loads(decrypted_data)
+        # TODO: 实现交易命令处理逻辑
+        response_data = {
+            "message": "Trading command received",
+            "data": trading_data
+        }
+        
+        # 对响应进行加密和签名
+        return encrypt_response(response_data)
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Failed to process trading command")
+
+# 混合加密 - 用于大量数据传输
+@app.post("/api/hybrid-encrypt")
+async def get_temporary_key():
+    """获取临时AES密钥，使用RSA加密传输"""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    import os
+    
+    # 生成临时AES密钥
+    aes_key = os.urandom(32)  # 256位AES密钥
+    
+    # 使用RSA公钥加密AES密钥
+    if not isinstance(PUBLIC_KEY, rsa.RSAPublicKey):
+        raise ValueError("公钥类型不正确，需要 RSA 公钥")
+        
+    padding_algorithm = padding.OAEP(
+        mgf=padding.MGF1(hashes.SHA256()),
+        algorithm=hashes.SHA256(),
+        label=None
+    )
+    encrypted_key = PUBLIC_KEY.encrypt(
+        aes_key,
+        padding_algorithm
+    )
+    
+    current_timestamp = int(time.time() * 1000)
+    
+    return {
+        "encrypted_key": base64.b64encode(encrypted_key).decode('utf-8'),
+        "timestamp": current_timestamp
+    }
+
+# 主程序入口
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
