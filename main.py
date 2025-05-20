@@ -1,6 +1,8 @@
 # main.py
 
+import os
 import time
+import uvicorn
 from config import FETCH_INTERVAL_SECONDS
 from database import init_db,Session
 from fetcher import fetch_price, get_kline
@@ -9,9 +11,6 @@ from strategy import should_trade
 from trader import execute_trade
 from sqlalchemy import Table, MetaData
 from fastapi import FastAPI
-
-# FastAPI 应用实例,本项目中使用 FastAPI 作为 Web 框架，Python是后端服务。
-StartFunction = FastAPI()
 
 def main():
     """
@@ -38,5 +37,7 @@ def main():
     print(test)
     session.close()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    port = int(os.getenv("API_PORT", "8000"))
+    uvicorn.run("doapi.main:app", host="0.0.0.0", port=8000, reload=True)
     main()
