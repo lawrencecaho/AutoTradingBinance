@@ -1,17 +1,15 @@
-import sys
-import os
-from auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+# fastapi/main.from auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 from authtotp import verify_totp as verify_totp_code
 from security import (
     decrypt_data,
     encrypt_data,
     verify_security_headers,
     verify_signature,
-    sign_data,
     get_security_info,
     PRIVATE_KEY,
     PUBLIC_KEY
-)
+)s
+import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Header, Depends
@@ -211,25 +209,42 @@ async def decrypt_request_data(request: SecureRequest) -> Dict[str, Any]:
 
 # 加密响应数据的函数
 def encrypt_response(response_data: Dict[str, Any]) -> EncryptedResponse:
-    """加密响应数据并生成签名"""
     current_timestamp = int(time.time() * 1000)
     
-    try:
-        # 将响应数据转换为JSON字符串并加密
-        json_data = json.dumps(response_data)
-        encrypted_data = encrypt_data(json_data)
-        
-        # 生成签名
-        signature = sign_data(encrypted_data, str(current_timestamp))
-        
-        return EncryptedResponse(
-            data=encrypted_data,
-            timestamp=current_timestamp,
-            signature=signature
-        )
-    except Exception as e:
-        logger.error(f"加密响应失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"加密响应失败: {str(e)}")
+    # 将响应数据转换为JSON字符串
+    json_data = json.dumps(response_data)
+    
+    # 使用服务器私钥对响应数据和时间戳进行签名
+    signature_data = (json_data + str(current_timestamp)).encode('utf-8')
+    
+    # 确保私钥是RSA类型
+    if not isinstance(PRIVATE_KEY, rsa.RSAPrivateKey):
+        raise ValueError("私钥类型不正确，需要 RSA 私钥")
+
+    # 创建哈希对象
+    hasher = hashes.Hash(hashes.SHA256())
+    hasher.update(signature_data)
+    digest = hasher.finalize()
+
+    # 创建签名对象
+    algorithm = hashes.SHA256()
+    pss = padding.PSS(
+        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+        salt_length=padding.PSS.MAX_LENGTH
+    )
+    # 签名
+    signature = PRIVATE_KEY.sign(
+        digest,
+        pss,
+        hashes.SHA256()
+    )
+    signature_base64 = base64.b64encode(signature).decode('utf-8')
+    
+    return EncryptedResponse(
+        data=json_data,
+        timestamp=current_timestamp,
+        signature=signature_base64
+    )
 
 @app.post("/verify-otp")
 async def verify_otp(
@@ -288,8 +303,35 @@ async def verify_otp(
                 }
             }
             
-            # 对响应进行加密和签名
-            return encrypt_response(response_data)
+            # 加密响应数据
+            encrypted_response = encrypt_data(json.dumps(response_data))
+            current_timestamp = int(time.time() * 1000)
+            
+            # 创建签名
+            signature_data = (encrypted_response + str(current_timestamp)).encode('utf-8')
+            # 创建哈希对象
+            hasher = hashes.Hash(hashes.SHA256())
+            hasher.update(signature_data)
+            digest = hasher.finalize()
+
+            # 创建签名对象
+            pss = padding.PSS(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            )
+            
+            # 签名
+            signature = PRIVATE_KEY.sign(
+                digest,
+                pss,
+                utils.Prehashed(hashes.SHA256())
+            )
+            
+            return EncryptedResponse(
+                data=encrypted_response,
+                timestamp=current_timestamp,
+                signature=base64.b64encode(signature).decode('utf-8')
+            )
         else:
             return {
                 "verified": False,
@@ -321,8 +363,35 @@ async def trading_config(
             "data": trading_data
         }
         
-        # 对响应进行加密和签名
-        return encrypt_response(response_data)
+        # 加密响应数据
+        encrypted_response = encrypt_data(json.dumps(response_data))
+        current_timestamp = int(time.time() * 1000)
+        
+        # 创建签名
+        signature_data = (encrypted_response + str(current_timestamp)).encode('utf-8')
+        # 创建哈希对象
+        hasher = hashes.Hash(hashes.SHA256())
+        hasher.update(signature_data)
+        digest = hasher.finalize()
+
+        # 创建签名对象
+        pss = padding.PSS(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        )
+        
+        # 签名
+        signature = PRIVATE_KEY.sign(
+            digest,
+            pss,
+            utils.Prehashed(hashes.SHA256())
+        )
+        
+        return EncryptedResponse(
+            data=encrypted_response,
+            timestamp=current_timestamp,
+            signature=base64.b64encode(signature).decode('utf-8')
+        )
         
     except Exception as e:
         raise HTTPException(status_code=400, detail="Failed to process trading command")
