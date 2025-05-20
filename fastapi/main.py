@@ -1,0 +1,246 @@
+# fastapi/main.py
+from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from cryptography.hazmat.primitives.asymmetric import rsa, padding, utils
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.backends import default_backend
+import base64
+import json
+import time
+import os
+from typing import Dict, Any
+from pathlib import Path
+
+app = FastAPI()
+
+# 添加CORS中间件以允许前端访问
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 在生产环境中应该限制为实际的前端域名
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 定义密钥存储路径
+KEY_DIRECTORY = Path(__file__).parent.parent / 'Secret'
+PRIVATE_KEY_PATH = KEY_DIRECTORY / 'fastapi-private.pem'
+PUBLIC_KEY_PATH = KEY_DIRECTORY / 'fastapi-public.pem'
+
+def load_or_generate_keys():
+    """加载或生成RSA密钥对"""
+    try:
+        # 尝试加载现有密钥
+        if PRIVATE_KEY_PATH.exists() and PUBLIC_KEY_PATH.exists():
+            with open(PRIVATE_KEY_PATH, 'rb') as private_file:
+                private_key = serialization.load_pem_private_key(
+                    private_file.read(),
+                    password=None,
+                    backend=default_backend()
+                )
+            with open(PUBLIC_KEY_PATH, 'rb') as public_file:
+                public_key = serialization.load_pem_public_key(
+                    public_file.read(),
+                    backend=default_backend()
+                )
+            return private_key, public_key
+
+        # 如果密钥不存在，生成新密钥对
+        private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048,
+            backend=default_backend()
+        )
+        public_key = private_key.public_key()
+
+        # 确保目录存在
+        KEY_DIRECTORY.mkdir(parents=True, exist_ok=True)
+
+        # 保存私钥
+        private_pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+        with open(PRIVATE_KEY_PATH, 'wb') as f:
+            f.write(private_pem)
+
+        # 保存公钥
+        public_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        with open(PUBLIC_KEY_PATH, 'wb') as f:
+            f.write(public_pem)
+
+        return private_key, public_key
+    except Exception as e:
+        raise RuntimeError(f"密钥生成或加载失败: {str(e)}")
+
+# 初始化密钥
+PRIVATE_KEY, PUBLIC_KEY = load_or_generate_keys()
+
+# 请求模型
+class SecureRequest(BaseModel):
+    encrypted_data: str
+    timestamp: int
+    signature: str | None = None  # 客户端签名可选
+
+# 响应模型
+class EncryptedResponse(BaseModel):
+    data: str
+    timestamp: int
+    signature: str
+
+# 安全信息接口
+@app.get("/security-info")
+def get_security_info():
+    # 格式化公钥，移除头尾和换行符，以便于前端使用
+    formatted_public_key = PUBLIC_KEY.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode('utf-8').replace(
+        '-----BEGIN PUBLIC KEY-----', ''
+    ).replace(
+        '-----END PUBLIC KEY-----', ''
+    ).replace('\n', '')
+    
+    return {
+        "public_key": formatted_public_key,
+        "signature_format": "RSA-SHA256(data + timestamp, SERVER_PRIVATE_KEY)",
+        "timestamp_format": "milliseconds since epoch",
+        "max_age": 60000,
+        "encryption_algorithm": "RSA-OAEP-SHA256"
+    }
+
+# 解密请求数据的依赖项
+async def decrypt_request_data(request: SecureRequest) -> Dict[str, Any]:
+    # 验证时间戳是否在有效期内
+    current_time = int(time.time() * 1000)  # 转换为毫秒
+    if current_time - request.timestamp > 60000:  # 60秒超时
+        raise HTTPException(status_code=401, detail="请求已过期")
+    
+    # 解码Base64加密数据
+    try:
+        encrypted_data_bytes = base64.b64decode(request.encrypted_data)
+        
+        # 使用私钥解密数据
+        if not isinstance(PRIVATE_KEY, rsa.RSAPrivateKey):
+            raise ValueError("私钥类型不正确，需要 RSA 私钥")
+        
+        padding_algorithm = padding.OAEP(
+            mgf=padding.MGF1(hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+        
+        decrypted_data = PRIVATE_KEY.decrypt(
+            encrypted_data_bytes,
+            padding_algorithm
+        )
+        
+        # 解析JSON数据
+        data = json.loads(decrypted_data.decode('utf-8'))
+        return data
+    
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"解密失败: {str(e)}")
+    
+
+# 加密响应数据的函数
+def encrypt_response(response_data: Dict[str, Any]) -> EncryptedResponse:
+    current_timestamp = int(time.time() * 1000)
+    
+    # 将响应数据转换为JSON字符串
+    json_data = json.dumps(response_data)
+    
+    # 使用服务器私钥对响应数据和时间戳进行签名
+    signature_data = (json_data + str(current_timestamp)).encode('utf-8')
+    
+    # 确保私钥是RSA类型
+    if not isinstance(PRIVATE_KEY, rsa.RSAPrivateKey):
+        raise ValueError("私钥类型不正确，需要 RSA 私钥")
+
+    # 创建签名
+    pss_padding = padding.PSS(
+        mgf=padding.MGF1(hashes.SHA256()),
+        salt_length=padding.PSS.MAX_LENGTH
+    )
+    
+    # 计算签名
+    hasher = hashes.Hash(hashes.SHA256())
+    hasher.update(signature_data)
+    digest = hasher.finalize()
+    
+    signature = PRIVATE_KEY.sign(
+        signature_data,
+        pss_padding,
+        utils.Prehashed(hashes.SHA256())
+    )
+    signature_base64 = base64.b64encode(signature).decode('utf-8')
+    
+    return EncryptedResponse(
+        data=json_data,
+        timestamp=current_timestamp,
+        signature=signature_base64
+    )
+
+# 安全数据处理接口
+@app.post("/api/secure-data")
+async def handle_secure_data(request: SecureRequest):
+    # 解密请求数据
+    data = await decrypt_request_data(request)
+    
+    # 处理业务逻辑
+    # ...这里是您的业务逻辑代码...
+    
+    # 示例响应数据
+    response_data = {
+        "success": True,
+        "message": "数据处理成功",
+        "userId": data.get("username", "unknown") + "_processed"
+    }
+    
+    # 加密并签名响应
+    return encrypt_response(response_data)
+
+# 混合加密 - 用于大量数据传输
+@app.post("/api/hybrid-encrypt")
+async def get_temporary_key():
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    import os
+    
+    # 生成临时AES密钥
+    aes_key = os.urandom(32)  # 256位AES密钥
+    
+    # 验证公钥类型并使用RSA公钥加密AES密钥
+    if not isinstance(PUBLIC_KEY, rsa.RSAPublicKey):
+        raise ValueError("公钥类型不正确，需要 RSA 公钥")
+        
+    # 使用RSA公钥加密AES密钥
+    padding_algorithm = padding.OAEP(
+        mgf=padding.MGF1(hashes.SHA256()),
+        algorithm=hashes.SHA256(),
+        label=None
+    )
+    encrypted_key = PUBLIC_KEY.encrypt(
+        aes_key,
+        padding_algorithm
+    )
+    
+    current_timestamp = int(time.time() * 1000)
+    
+    # 存储密钥与时间戳的关联（在实际应用中，应该使用Redis或其他存储方式）
+    # 这里只是一个简单示例
+    # key_store[current_timestamp] = aes_key
+    
+    return {
+        "encrypted_key": base64.b64encode(encrypted_key).decode('utf-8'),
+        "timestamp": current_timestamp
+    }
+
+# 主程序入口
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
