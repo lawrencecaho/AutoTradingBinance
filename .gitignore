@@ -6,3 +6,5 @@ Secret/PythonT1.sh
 Secret/
 test.py
 doapi/QRCodes/
+.env
+autotradingbinance.egg-info/
