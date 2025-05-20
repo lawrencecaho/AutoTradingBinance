@@ -8,6 +8,10 @@ from calculator import calculate_diff
 from strategy import should_trade
 from trader import execute_trade
 from sqlalchemy import Table, MetaData
+from fastapi import FastAPI
+
+# FastAPI 应用实例,本项目中使用 FastAPI 作为 Web 框架，Python是后端服务。
+StartFunction = FastAPI()
 
 def main():
     """

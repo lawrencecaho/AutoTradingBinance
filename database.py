@@ -93,10 +93,19 @@ def dbupdate_common(session, table, var, value, **kwargs):
     session.execute(update_entry)
     session.commit()
     return True
-def dbselect_common(session, table, var, value):
+def dbselect_common(session, table_name, var, value):
     """
     查询表中指定字段的记录
+    Args:
+        session: SQLAlchemy session
+        table_name: 表名字符串
+        var: 查询字段名
+        value: 查询值
+    Returns:
+        list of tuples: 查询结果列表
     """
+    # 从元数据中获取表对象
+    table = Table(table_name, metadata, autoload_with=engine)
     select_entry = table.select().where(table.c[var] == value)
     result = session.execute(select_entry).fetchall()
     return result

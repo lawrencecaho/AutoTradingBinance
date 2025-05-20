@@ -12,6 +12,7 @@ import time
 
 # ==== 1. 账户配置（从 Binance Testnet 获取） ====
 API_KEY= ''
+API_SECRET= ''
 PRIVATE_KEY_PATH= ''
 
 # ==== 2. 交易参数设置，实际因从数据库中拉取 ====

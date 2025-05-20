@@ -14,12 +14,28 @@ def fetch_price_history():
     """
     session = Session()
     try:
-        prices = session.query(Price).order_by(Price.timestamp.asc()).all()
-        price_data = [{"timestamp": p.timestamp, "price": p.price} for p in prices]
-        return pd.DataFrame(price_data)
+        # 查询所有价格记录
+        stmt = session.query(Price).order_by(Price.c.timestamp.asc())
+        result = stmt.all()
+
+        # 将结果转换为 DataFrame
+        data = {
+            "id": [],
+            "symbol": [],
+            "price": [],
+            "timestamp": []
+        }
+        for row in result:
+            data["id"].append(row.id)
+            data["symbol"].append(row.symbol)
+            data["price"].append(row.price)
+            data["timestamp"].append(row.timestamp)
+
+        price_df = pd.DataFrame(data)
+        return price_df
     except Exception as e:
-        logging.error(f"[Error] 获取价格历史时发生错误: {e}")
-        return pd.DataFrame()  # 返回空的 DataFrame 以避免后续代码崩溃
+        logging.error(f"[Database] 获取价格历史失败: {e}")
+        return pd.DataFrame()
     finally:
         session.close()
 

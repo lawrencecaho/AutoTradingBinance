@@ -10,10 +10,11 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.backends import default_backend
 from config import BINANCE_API_KEY, BINANCE_PRIVATE_KEY_PATH
+from config import dbget_option
 
 # ==== 账户配置 ====
-API_KEY = BINANCE_API_KEY
-PRIVATE_KEY_PATH = BINANCE_PRIVATE_KEY_PATH
+API_KEY = dbget_option(BINANCE_API_KEY, str)
+PRIVATE_KEY_PATH = dbget_option(BINANCE_PRIVATE_KEY_PATH, str)
 
 # ==== 通用签名函数 ====
 def rsa_sign(query_string: str, private_key_path: str) -> str:
@@ -40,6 +41,8 @@ def signed_request(method: str, endpoint: str, params: dict):
     base_url = "https://testnet.binance.vision"
     params['timestamp'] = str(int(time.time() * 1000))
     query_string = '&'.join([f"{key}={value}" for key, value in params.items()])
+    if not isinstance(PRIVATE_KEY_PATH, str) or not PRIVATE_KEY_PATH:
+        raise ValueError("PRIVATE_KEY_PATH 配置无效或未设置，请检查配置文件。")
     signature = rsa_sign(query_string, PRIVATE_KEY_PATH)
     full_url = f"{base_url}{endpoint}?{query_string}&signature={signature}"
     headers = {
