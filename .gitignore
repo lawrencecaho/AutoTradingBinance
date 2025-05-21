@@ -8,3 +8,4 @@ test.py
 doapi/QRCodes/
 .env
 autotradingbinance.egg-info/
+fastapi.log

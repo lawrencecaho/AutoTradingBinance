@@ -1,3 +1,5 @@
+# myfastapi/auth.py
+# 用于处理 JWT 令牌和密码哈希的工具模块
 from datetime import datetime, timedelta, timezone
 import os
 from typing import Optional, Dict, Any
