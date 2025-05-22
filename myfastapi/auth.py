@@ -7,6 +7,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import HTTPException, status
 import logging
+from config import DATABASE_URL
 
 # 配置日志
 logger = logging.getLogger(__name__)

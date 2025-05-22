@@ -6,12 +6,12 @@ from datetime import timedelta
 import base64
 import json
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import logging
 
 # 配置日志
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.DEBUG,  # 改为DEBUG级别
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     filename='fastapi.log',
     filemode='w'
@@ -46,8 +46,13 @@ from myfastapi.security import (
     sign_data,
     get_security_info,
     PRIVATE_KEY,
-    PUBLIC_KEY
+    PUBLIC_KEY,
+    store_client_public_key,
+    get_client_public_key,
+    encrypt_with_client_key,
+    hybrid_encrypt_with_client_key
 )
+from myfastapi.chunked_encryption import chunk_encrypt_large_data
 from database import Session, dbselect_common
 
 # 定义模型
@@ -113,14 +118,128 @@ app.add_middleware(
 )
 
 # 工具函数
-def encrypt_response(response_data: Dict[str, Any]) -> EncryptedResponse:
+def encrypt_response(response_data: Dict[str, Any], client_id: Optional[str] = None) -> EncryptedResponse:
     """加密响应数据并生成签名"""
     current_timestamp = int(time.time() * 1000)
     
     try:
         json_data = json.dumps(response_data)
-        encrypted_data = encrypt_data(json_data)
-        signature = sign_data(encrypted_data, str(current_timestamp))
+        data_size = len(json_data)
+        logger.debug(f"原始响应数据大小: {data_size} 字节")
+        
+        # 加密方法选择策略
+        encryption_strategy = "standard"
+        if data_size > 1024 * 1024:  # 1MB以上使用分块加密
+            encryption_strategy = "chunked"
+            logger.debug(f"选择分块加密策略（数据大小: {data_size} 字节）")
+        elif data_size > 200:  # 200字节以上使用混合加密
+            encryption_strategy = "hybrid"
+            logger.debug(f"选择混合加密策略（数据大小: {data_size} 字节）")
+        else:
+            logger.debug(f"选择标准RSA加密策略（数据大小: {data_size} 字节）")
+        
+        # 初始化变量
+        encrypted_data = None
+        encryption_methods_tried = []
+        
+        # 如果提供了客户端ID且有对应的公钥，使用客户端公钥加密
+        client_public_key = None
+        if client_id:
+            logger.debug(f"尝试获取客户端 {client_id} 的公钥")
+            client_public_key = get_client_public_key(client_id)
+            
+        if client_public_key:
+            # 使用客户端公钥加密
+            if encryption_strategy == "chunked":
+                # 超大数据使用分块加密
+                try:
+                    logger.debug(f"数据大小 {data_size} 字节超过1MB，使用分块加密")
+                    
+                    # 计算合适的块大小：默认256KB，或数据大小的1/10（取较小值）
+                    chunk_size = min(256 * 1024, data_size // 10)
+                    if chunk_size < 10 * 1024:  # 至少10KB
+                        chunk_size = 10 * 1024
+                        
+                    logger.debug(f"使用块大小: {chunk_size} 字节")
+                    
+                    # 使用分块加密
+                    chunked_result = chunk_encrypt_large_data(json_data, client_public_key, chunk_size)
+                    
+                    # 检查分块加密是否成功
+                    if chunked_result.get("success", False):
+                        # 如果分块加密成功，返回结果
+                        encrypted_data = json.dumps(chunked_result)
+                        encryption_methods_tried.append("chunked_hybrid")
+                        logger.info(f"使用分块加密成功处理超大数据响应 ({data_size} -> {len(encrypted_data)} 字节)")
+                    else:
+                        # 如果分块加密失败，记录错误
+                        logger.error(f"分块加密失败: {chunked_result.get('error', '未知错误')}")
+                        # 不设置encrypted_data，继续尝试其他方法
+                except Exception as chunked_error:
+                    logger.error(f"分块加密过程异常: {str(chunked_error)}")
+                    # 继续尝试标准混合加密
+            
+            if encryption_strategy == "hybrid" or (encryption_strategy == "chunked" and encrypted_data is None):
+                # 使用混合加密（AES+RSA）处理大数据
+                try:
+                    logger.debug(f"数据大小 {data_size} 字节超过RSA限制，使用混合加密")
+                    
+                    # 使用混合加密（AES+RSA）
+                    hybrid_result = hybrid_encrypt_with_client_key(json_data, client_public_key)
+                    
+                    # 检查混合加密是否成功
+                    if hybrid_result.get("success", False):
+                        # 如果混合加密成功，返回结果
+                        encrypted_data = json.dumps(hybrid_result)
+                        encryption_methods_tried.append("hybrid")
+                        logger.info(f"使用混合加密成功处理大数据响应 ({data_size} -> {len(encrypted_data)} 字节)")
+                    else:
+                        # 如果混合加密失败，记录错误
+                        logger.error(f"混合加密失败: {hybrid_result.get('error', '未知错误')}")
+                        # 不设置encrypted_data，继续尝试其他方法
+                except Exception as hybrid_error:
+                    logger.error(f"混合加密过程异常: {str(hybrid_error)}")
+                    # 继续尝试其他方法
+            
+            # 如果分块加密和混合加密都失败或数据较小，尝试直接RSA加密
+            if encrypted_data is None:
+                try:
+                    logger.debug(f"尝试使用客户端公钥直接RSA加密 (数据大小: {data_size} 字节)")
+                    encrypted_data = encrypt_with_client_key(json_data, client_public_key)
+                    encryption_methods_tried.append("client_rsa")
+                    logger.info(f"使用客户端 {client_id} 的公钥RSA加密响应成功")
+                except Exception as client_encrypt_error:
+                    logger.error(f"使用客户端公钥加密失败: {str(client_encrypt_error)}")
+                    # 继续尝试服务器标准加密
+        
+        # 如果客户端加密方法都失败，使用服务器的标准加密
+        if encrypted_data is None:
+            try:
+                logger.debug("使用服务器标准加密")
+                encrypted_data = encrypt_data(json_data)
+                encryption_methods_tried.append("server_rsa")
+                logger.info("使用服务器标准加密成功")
+            except Exception as server_encrypt_error:
+                logger.error(f"服务器标准加密失败: {str(server_encrypt_error)}")
+                # 所有加密方法都失败，发送明文错误信息
+                fallback_data = {
+                    "error": "encryption_failed",
+                    "message": "无法加密响应数据，服务器内部错误",
+                    "timestamp": current_timestamp
+                }
+                encrypted_data = json.dumps(fallback_data)
+                encryption_methods_tried.append("plaintext_fallback")
+                logger.critical("所有加密方法均失败，返回明文错误信息")
+        
+        # 记录最终使用的加密方法
+        logger.info(f"响应加密完成，使用方法: {', '.join(encryption_methods_tried)}")
+        
+        # 生成签名
+        try:
+            signature = sign_data(encrypted_data, str(current_timestamp))
+        except Exception as sign_error:
+            logger.error(f"签名生成失败: {str(sign_error)}")
+            signature = "signature_error"
         
         return EncryptedResponse(
             data=encrypted_data,
@@ -154,18 +273,22 @@ async def verify_otp(
     security_headers: dict = Depends(verify_security_headers)
 ):
     """验证OTP"""
-    # 验证签名
-    verify_signature(
+    # 验证签名 - 现在处理前端固定签名值
+    if not verify_signature(
         request.encrypted_data,
         str(request.timestamp),
-        request.signature or ""
-    )
+        request.signature or "frontend"
+    ):
+        raise HTTPException(status_code=401, detail="Invalid signature")
     
     # 解密并验证数据
     try:
         data = await decrypt_request_data(request)
         if not isinstance(data, dict) or "code" not in data or "uid" not in data:
             raise HTTPException(status_code=400, detail="无效的请求数据格式")
+        
+        # 获取客户端ID，用于后续响应加密
+        client_id = security_headers.get("api_key")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -177,14 +300,14 @@ async def verify_otp(
             return encrypt_response({
                 "verified": False,
                 "message": "用户不存在"
-            })
+            }, client_id)
 
         user = result[0]
         if not user.totpsecret:
             return encrypt_response({
                 "verified": False,
                 "message": "未找到用户密钥"
-            })
+            }, client_id)
 
         # 验证OTP
         if verify_totp_code(data["uid"], data["code"]):
@@ -201,12 +324,12 @@ async def verify_otp(
                     "uid": user.uid,
                     "name": user.username if hasattr(user, 'username') else ""
                 }
-            })
+            }, client_id)
         else:
             return encrypt_response({
                 "verified": False,
                 "message": "验证码错误"
-            })
+            }, client_id)
     finally:
         session.close()
 
@@ -223,11 +346,13 @@ async def trading_config(
     )
     
     try:
+        # 获取客户端ID，用于后续响应加密
+        client_id = security_headers.get("api_key")
         trading_data = await decrypt_request_data(request)
         return encrypt_response({
             "message": "已接收交易命令",
             "data": trading_data
-        })
+        }, client_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"处理交易命令失败: {str(e)}")
 
@@ -253,6 +378,19 @@ async def get_temporary_key():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"生成临时密钥失败: {str(e)}")
+
+@app.post("/register-client-key")
+async def register_client_key(request: dict):
+    """注册客户端公钥"""
+    if "client_id" not in request or "public_key" not in request:
+        raise HTTPException(status_code=400, detail="Missing client_id or public_key")
+    
+    try:
+        store_client_public_key(request["client_id"], request["public_key"])
+        return {"status": "success", "message": "Client public key registered"}
+    except Exception as e:
+        logger.error(f"注册客户端公钥失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 启动服务器
 if __name__ == "__main__":

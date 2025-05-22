@@ -1,42 +1,109 @@
-# 原有结构已被颠覆，说明 TODO 中
-***
-# About funtion get_kline()
-| 字段名                   | 含义           | 数据类型            |
-| --------------------- | ------------ | --------------- |
-| `open_time`           | 开盘时间（毫秒时间戳）  | `int`           |
-| `open`                | 开盘价          | `str` → `float` |
-| `high`                | 最高价          | `str` → `float` |
-| `low`                 | 最低价          | `str` → `float` |
-| `close`               | 收盘价          | `str` → `float` |
-| `volume`              | 成交量（以币为单位）   | `str` → `float` |
-| `close_time`          | 收盘时间（毫秒时间戳）  | `int`           |
-| `quote_asset_volume`  | 成交额（以计价币为单位） | `str` → `float` |
-| `num_trades`          | 成交笔数         | `int`           |
-| `taker_buy_base_vol`  | 主动买入成交量      | `str` → `float` |
-| `taker_buy_quote_vol` | 主动买入成交额      | `str` → `float` |
-| `ignore`              | 保留字段         | `str` → 忽略      |
-## 对于数据库
-| 字段名                   | 类型                         | 说明              |
-| --------------------- | -------------------------- | --------------- |
-| `id`                  | `TEXT`                     | 主键，自定义生成        |
-| `symbol`              | `TEXT`                     | 币种对名（如 BTCUSDT） |
-| `open` \~ `close`     | `NUMERIC(20, 8)`           | 价格字段，最高支持小数点8位  |
-| `volume`              | `NUMERIC(30, 10)`          | 成交量，10位小数更安全    |
-| `open_time`           | `TIMESTAMP WITH TIME ZONE` | K 线开始时间         |
-| `close_time`          | `TIMESTAMP WITH TIME ZONE` | K 线结束时间         |
-| `quote_asset_volume`  | `NUMERIC(30, 10)`          | 成交额（以 USDT 计）   |
-| `num_trades`          | `INTEGER`                  | 成交笔数            |
-| `taker_buy_base_vol`  | `NUMERIC(30, 10)`          | 主动买入币数量         |
-| `taker_buy_quote_vol` | `NUMERIC(30, 10)`          | 主动买入金额          |
-| `ignore`              | `TEXT`                     | Binance 暂无用字段   |
-| `timestamp`           | `TIMESTAMP WITH TIME ZONE` | 插入时间，默认当前 UTC   |
+# PostgreSQL兼容的加密通信系统
 
+本项目实现了一个基于FastAPI的安全API后端与Next.js前端，提供RSA加密通信、OTP认证和JWT授权功能。系统已针对PostgreSQL进行优化，使用SQLAlchemy Core进行数据库操作。
 
-# 数据结构
-## 数据表
-Price
+## 主要功能
 
-表名格式：price_data_{SYMBOL.lower()}
+- **安全通信**：使用RSA加密保护客户端与服务器之间的通信
+- **双因素认证**：支持基于TOTP (Google Authenticator) 的验证
+- **数据库兼容性**：优化的PostgreSQL支持，使用SQLAlchemy Core
+- **双向加密**：实现了完整的双向加密通信机制，请求和响应都经过加密
+- **安全工具**：提供了安全检查和权限设置工具
+- **密钥管理**：自动密钥轮换和同步机制
+- **前端集成**：安全的Next.js前端实现
+
+## 快速开始
+
+### 环境设置
+
+1. 克隆仓库并安装依赖
+
+```bash
+git clone <repository-url>
+cd AutoTradingBinance
+pip install -r requirements.txt
+cd Frontend
+npm install
+cd ..
+```
+
+2. 设置环境变量
+
+创建`.env`文件并添加必要的环境变量：
+
+```
+DATABASE_URL=postgresql+psycopg2://username:password@localhost:5432/dbname
+JWT_SECRET=your_jwt_secret_key
+API_SECRET_KEY=your_api_secret_key
+```
+
+3. 使用快速启动脚本
+
+```bash
+./quick_start.sh
+```
+
+这将执行以下操作：
+- 创建测试用户和TOTP密钥
+- 显示如何启动API服务器和前端开发服务器的指令
+- 提供登录信息
+
+## 组件说明
+
+### 后端 (FastAPI)
+
+- **security.py**: 处理加密、解密和签名验证
+- **auth.py**: JWT令牌生成和验证
+- **authtotp.py**: TOTP验证码生成和验证
+- **main.py**: API端点定义和请求处理
+
+### 前端 (Next.js)
+
+- **crypto.ts**: 加密工具函数
+- **secureApi.ts**: 加密通信实现
+- **AuthContext.tsx**: 认证状态管理
+- **login/page.tsx**: 登录页面实现
+
+## 测试与调试
+
+详细的测试指南请参考 [测试指南](./docs/testing_guide.md)。
+
+简要步骤：
+
+1. 运行测试套件：
+
+```bash
+bash myfastapi/run_tests.sh
+```
+
+2. 手动测试登录：
+
+- 启动后端：`uvicorn myfastapi.main:app --reload`
+- 启动前端：`cd Frontend && npm run dev`
+- 访问：http://localhost:3000/login
+
+## 安全说明
+
+本系统已实施以下安全措施：
+
+- 服务器端使用RSA-2048加密
+- 支持密钥自动轮换（每30天）
+- 请求包含时间戳以防止重放攻击
+- 数据库存储的密码使用bcrypt加密
+
+## 技术文档
+
+- [PostgreSQL安全模块文档](./docs/README-PostgreSQL-Security.md)
+- [安全修复记录](./docs/security_fix.md)
+- [密钥管理说明](./docs/security_keys.md)
+- [测试指南](./docs/testing_guide.md)
+
+## 近期更新
+
+- 修复了安全头验证问题
+- 增强了前端错误处理
+- 添加了测试用户创建脚本
+- 改进了数据库连接与事务管理
 
 字段：
 
@@ -113,4 +180,54 @@ decision
 所有数据表均基于交易对符号动态生成表名，以支持多交易对场景。
 
 变量用于连接数据库记录、执行交易逻辑判断与记录决策结果。
+
+## 安全工具
+
+系统提供了多种安全工具，帮助维护和验证系统安全：
+
+### 安全检查
+
+运行安全检查脚本，验证系统安全配置：
+
+```bash
+./security_check.sh
+```
+
+这将检查密钥文件权限、环境变量配置、密钥过期状态等安全问题。
+
+### 权限设置
+
+设置正确的文件权限，确保密钥安全：
+
+```bash
+sudo ./secure_permissions.sh
+```
+
+### 测试工具
+
+系统包含多种测试工具，验证功能正常：
+
+```bash
+cd myfastapi
+./run_tests.sh
+```
+
+或测试双向加密功能：
+
+```bash
+python myfastapi/demo_bidirectional_encryption.py
+```
+
+### 前端测试页面
+
+访问 `/test-encryption` 路径，测试前端双向加密功能。
+
+## 安全文档
+
+详细的安全文档位于 `docs` 目录：
+
+- [安全指南](docs/security_guide.md) - 密钥管理与安全通信详解
+- [响应加密](docs/response_encryption.md) - 双向加密实现说明
+- [安全最佳实践](docs/security_best_practices.md) - 安全配置与部署建议
+- [安全修复](docs/security_fix.md) - 近期安全修复说明
 
