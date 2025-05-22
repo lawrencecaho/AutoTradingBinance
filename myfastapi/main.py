@@ -1,6 +1,14 @@
 # myfastapi/main.py
 import sys
 import os
+
+# 添加项目根目录到Python路径
+# 确保这在任何依赖于此路径的导入之前运行
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_current_dir)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from pathlib import Path
 from datetime import timedelta
 import base64
@@ -8,6 +16,7 @@ import json
 import time
 from typing import Dict, Any, Optional
 import logging
+#from config import DATABASE_URL #as DATABASE_URL
 
 # 配置日志
 logging.basicConfig(
@@ -18,14 +27,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 添加项目根目录到Python路径
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
 # FastAPI相关导入
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
@@ -36,7 +39,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.backends import default_backend
 
 # 项目内部导入
-from myfastapi.auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from myfastapi.auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, verify_token
 from myfastapi.authtotp import verify_totp as verify_totp_code
 from myfastapi.security import (
     decrypt_data,
@@ -74,8 +77,7 @@ async def lifespan(app: FastAPI):
         logger.info("正在验证配置...")
         required_env_vars = [
             "JWT_SECRET",
-            "API_SECRET_KEY",
-            "DATABASE_URL"
+            "API_SECRET_KEY"  # DATABASE_URL 将从 config.py 获取，不再在此处检查环境变量
         ]
         
         missing_vars = [var for var in required_env_vars if not os.getenv(var)]
@@ -391,6 +393,74 @@ async def register_client_key(request: dict):
     except Exception as e:
         logger.error(f"注册客户端公钥失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# 添加JWT验证的依赖项
+async def get_current_user_from_token(authorization: str = Header(None)):
+    """验证 JWT 令牌并返回当前用户"""
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未提供认证令牌",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 检查令牌格式
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="认证方案无效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 验证令牌
+    return verify_token(token)
+    # 如果验证成功，返回用户信息
+
+
+# 响应统计数据 /statistics & /health
+@app.get("/statistics")
+async def statistics(current_user: Dict[str, Any] = Depends(get_current_user_from_token)):
+    """
+    获取统计数据。
+    此端点受 JWT 保护。只有提供有效 Bearer 令牌的请求才能访问。
+    """
+    # 如果代码执行到这里，意味着 get_current_user_from_token 依赖已成功验证了 JWT。
+    # current_user 参数包含了从 JWT 中解码出的用户数据（payload）。
+    
+    user_id = current_user.get("sub", "unknown") # "sub" 字段通常包含用户唯一标识符
+
+    # 这里可以添加获取和返回统计数据的逻辑
+    # 例如: logger.info(f"用户 {user_id} 正在访问统计数据")
+    return {
+        "status": "success", 
+        "data": {
+            # 示例数据，实际应用中应填充真实统计信息
+            "page_views": 1000,
+            "active_users": 50
+        },
+        "user": user_id  # 在响应中返回用户ID，表明是哪个用户的数据
+    }
+
+@app.get("/health")
+async def health_check(current_user: Dict[str, Any] = Depends(get_current_user_from_token)):
+    """
+    健康检查。
+    此端点同样受 JWT 保护，用于验证服务状态，同时确认用户已认证。
+    """
+    # 同样，执行到这里表示用户已通过 JWT 认证。
+    # current_user 包含了认证用户的 JWT payload。
+
+    user_id = current_user.get("sub", "unknown")
+
+    # 例如: logger.info(f"用户 {user_id} 正在执行健康检查")
+    return {
+        "status": "healthy",
+        "message": "系统运行正常且用户已认证",
+        "user": user_id
+    }
+
+# ... (之后的代码) ...
 
 # 启动服务器
 if __name__ == "__main__":

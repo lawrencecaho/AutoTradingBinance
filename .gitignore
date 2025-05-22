@@ -17,3 +17,4 @@ myfastapi/test_security.py
 myfastapi/integration_test.py
 myfastapi/create_test_user.py
 myfastapi/Security/
+myfastapi/fastcode.md
