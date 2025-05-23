@@ -35,7 +35,7 @@ def main():
     session = Session()
     test = get_kline("ETHUSDT", "1m", dbr=True, session=session, table=KLineTable, startTime=None, endTime=None, limit=100)
     print(test)
-    session.close()
+    #session.close()
 
 if __name__ == "__main__":
     port = int(os.getenv("API_PORT", "8000"))

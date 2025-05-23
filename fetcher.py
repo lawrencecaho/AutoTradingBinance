@@ -34,7 +34,7 @@ def fetch_price(Price):
 #命令行调用传入参数 store 则独立运行直到用户输入 'q' 停止。（不需要传入参数 store 也可以运行，也会自动存储数据）
 if __name__ == '__main__':
     # 初始化数据库表
-    init_db()
+    #init_db()
     # 只反射一次表结构
     from sqlalchemy import Table, MetaData
     metadata = MetaData()
@@ -49,6 +49,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     print("Press 'q' and Enter to stop the fetcher.")
+    timeset = dbget_option("FETCH_INTERVAL_SECONDS", cast_type=int) # 获取时间间隔
+    if timeset is None:
+            timeset = 120  # 默认间隔
+    print(f"[Fetcher] Fetching price every {timeset} seconds.")
 
     while True:
         # 检测用户输入是否为 'q'
@@ -67,9 +71,8 @@ if __name__ == '__main__':
                 print(f"[Fetcher] Fetched price: {price}")
 
         # 等待指定的时间间隔
-        timeset = dbget_option("FETCH_INTERVAL_SECONDS", cast_type=int)
-        if timeset is None:
-            timeset = 120  # 默认间隔
+        
+        
         time.sleep(float(timeset))
 
 # K Line

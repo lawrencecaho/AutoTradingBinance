@@ -460,7 +460,22 @@ async def health_check(current_user: Dict[str, Any] = Depends(get_current_user_f
         "user": user_id
     }
 
-# ... (之后的代码) ...
+@app.get("/MA-data")
+async def root():
+    """
+    获取K线数据的示例端点。
+    这里可以添加获取K线数据的逻辑。
+    """
+    # 示例数据，实际应用中应填充真实K线数据
+    MA_data = {
+        "symbol": "BTCUSDT",
+        "interval": "1h",
+        "data": [
+            {"timestamp": 1633072800000, "open": 45000, "high": 46000, "low": 44000, "close": 45500},
+            {"timestamp": 1633076400000, "open": 45500, "high": 46500, "low": 45000, "close": 46000}
+        ]
+    }
+    return MA_data
 
 # 启动服务器
 if __name__ == "__main__":

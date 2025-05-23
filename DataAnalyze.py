@@ -1,39 +1,93 @@
+# DataAnalyze.py
 import pandas as pd
 import logging
 from config import SYMBOL, FETCH_INTERVAL_SECONDS
-from database import Session, dbselect_common, dbinsert_common, dbupdate_common
+from database import (
+    Session, 
+    engine,  # Assuming engine is correctly configured for PostgreSQL
+    dbget_kline, # Changed from dbselect_common to dbget_kline
+)
+from datetime import datetime, timezone
+from sqlalchemy import Table, Column, DateTime, Float, MetaData, inspect, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+"""
+| MA 类型 | 意义（基于每根 K 线）   | `limit` 最小值 | 示例 API 参数 (`interval=1h`) | 说明             |
+| ----- | -------------- | ----------- | ------------------------- | --------------------------- |
+| MA5   | 最近 5 根 K 线均值   | 5           | `limit=5`                 | 快速变化，适合短线分析      |
+| MA10  | 最近 10 根 K 线均值  | 10          | `limit=10`                | 短期趋势判断               |
+| MA20  | 最近 20 根 K 线均值  | 20          | `limit=20`                | 常见中期趋势线          |
+| MA30  | 最近 30 根 K 线均值  | 30          | `limit=30`                | 比 MA20 平滑                   |
+| MA50  | 最近 50 根 K 线均值  | 50          | `limit=50`                | 可靠的中长期线            |
+| MA100 | 最近 100 根 K 线均值 | 100         | `limit=100`               | 代表长期趋势                |
+| MA200 | 最近 200 根 K 线均值 | 200         | `limit=200`（需分批获取）   | 经典长期趋势线，Binance 最多返回 1000 条 |
+"""
 
-def StartCaculate():
+def CheckPreCalculator():
     """
-    主函数，获取K线数据并计算MACD指标
+    检查数据库表中的最新列距离现在时间距离
+
     """
-    # 获取K线数据
+    # 这里可以添加一些简单的检查逻辑，比如检查数据库连接等
+    try:
+        session = Session()
+        session.close()
+        print("计算器检查通过")
+    except Exception as e:
+        print(f"计算器检查失败: {e}")
+
+def StartCaculateMACD(): # This function seems to be more for MACD, let's keep analyze_data for MAs
+    """
+    主函数，获取K线数据并计算MACD指标 (当前主要用于MACD，EMA存储在analyze_data中)
+    """
     session = Session()
-    # 使用原始SYMBOL大小写构建表名
-    KLine_data = dbselect_common(session, f"KLine_{SYMBOL}", "symbol", SYMBOL)
-    if KLine_data is None:
-        logging.error("获取K线数据失败")
-        return
+    try:
+        KLine_data = dbget_kline(session, f"KLine_{SYMBOL}", SYMBOL, order_by_column='open_time', ascending=True)
+        if KLine_data is None:
+            logging.error(f"获取K线数据失败 (StartCaculateMACD for {SYMBOL})")
+            return
 
-    # 将K线数据转换为DataFrame
-    df = KLine_to_dataframe(KLine_data)
+        df = KLine_to_dataframe(KLine_data)
+        if df.empty:
+            logging.warning(f"K线数据转换后DataFrame为空 (StartCaculateMACD for {SYMBOL})")
+            return
+        
+        # Ensure DataFrame is sorted by open_time for consistent calculations if needed
+        df.sort_values(by='open_time', inplace=True)
 
-    # 计算MACD指标
-    df = calculate_macd(df)
-
-    # 打印结果
-    print(df[['open_time', 'close', 'macd']])
+        df = calculate_macd(df)
+        # logging.info(f"MACD data for {SYMBOL}:\n{df[['open_time', 'close', 'macd']].tail()}")
+        # No printing to terminal as per user request for MA data. 
+        # If MACD also should not be printed, the line above can be fully removed or logged.
+    except Exception as e:
+        logging.error(f"Error in StartCaculateMACD for {SYMBOL}: {e}", exc_info=True)
+    finally:
+        session.close()
 
 
 def calculate_ema(series, span):
-    return series.ewm(span=span, adjust=False).mean()
+    # Ensure min_periods is at least 1 so that it doesn't return NaN for the first row if span is 1
+    # and to allow calculation to start as soon as there's data.
+    # Pandas default for min_periods in ewm is 0, but for mean calculation, it effectively becomes 1.
+    # Using min_periods=span would mean waiting for `span` periods to get the first EMA value.
+    # Using min_periods=1 (or 0 which defaults to 1 for mean) allows EMA to be calculated from the first data point.
+    return series.ewm(span=span, adjust=False, min_periods=1).mean()
 
 def calculate_macd(df):
     """
     计算 MACD 指标，并添加到原始 DataFrame 中。
     要求 df 有 'close' 列（收盘价）。
     """
+    if 'close' not in df.columns:
+        logging.error("'close' column not found in DataFrame. Cannot calculate MACD.")
+        return df
+    if df['close'].isnull().all():
+        logging.warning("All 'close' values are NaN. MACD calculation will result in NaNs.")
+        # Add empty columns to prevent key errors later if other code expects them
+        for col_name in ['ema12', 'ema26', 'dif', 'dea', 'macd']:
+            df[col_name] = pd.NA 
+        return df
+
     df['ema12'] = calculate_ema(df['close'], 12)
     df['ema26'] = calculate_ema(df['close'], 26)
     df['dif'] = df['ema12'] - df['ema26']
@@ -45,7 +99,6 @@ def KLine_to_dataframe(KLine_data):
     """
     将数据库返回的K线数据 (元组列表) 转换为 pandas DataFrame
     """
-    # 基于 database.py中 insert_KLine 函数的列顺序和用户提供的信息
     columns = [
         'id', 'symbol', 'open', 'high', 'low', 'close', 'volume',
         'open_time', 'close_time', 'quote_asset_volume', 'num_trades',
@@ -53,117 +106,214 @@ def KLine_to_dataframe(KLine_data):
     ]
     df = pd.DataFrame(KLine_data, columns=columns)
     
-    # 转换类型
-    # 如果 open_time, close_time, timestamp 从数据库取出时已是 datetime 对象，
-    # pd.to_datetime() 仍然是安全的，可以确保它们是 pandas 的 datetime64[ns] 类型。
-    # 如果它们是标准格式的字符串，pd.to_datetime() 也能正确解析。
-    df['open_time'] = pd.to_datetime(df['open_time'])
-    df['close_time'] = pd.to_datetime(df['close_time'])
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
-
-    # 将数值列转换为数字类型
     numeric_cols = ['open', 'high', 'low', 'close', 'volume', 
                     'quote_asset_volume', 'num_trades', 
                     'taker_buy_base_vol', 'taker_buy_quote_vol']
     for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col])
+        df[col] = pd.to_numeric(df[col], errors='coerce') # Coerce errors to NaN
+
+    time_cols = ['open_time', 'close_time', 'timestamp']
+    for col in time_cols:
+        df[col] = pd.to_datetime(df[col], errors='coerce') # Coerce errors to NaT
         
     return df
 
-def analyze_data():
+def calculate_multiple_emas(df, periods=[5, 10, 20, 30]):
     """
-    分析存储在数据库中的K线数据。
+    Calculates multiple EMAs for the 'close' price and adds them to the DataFrame.
+    """
+    if 'close' not in df.columns:
+        logging.error("'close' column not found in DataFrame. Cannot calculate EMAs.")
+        return df
+    if df['close'].isnull().all():
+        logging.warning("All 'close' values are NaN. EMA calculations will result in NaNs.")
+        for period in periods:
+            df[f'ema{period}'] = pd.NA # Assign pandas NA for consistency
+        return df
+
+    for period in periods:
+        df[f'ema{period}'] = calculate_ema(df['close'], period)
+    logging.info(f"Calculated EMAs for periods: {periods} for symbol {SYMBOL}")
+    return df
+
+def create_ma_table_if_not_exists(engine, table_name_str):
+    """
+    Creates a table for storing MA/EMA data if it doesn't already exist.
+    The table will have open_time as the primary key.
+    Column names for EMAs are fixed as ema5, ema10, ema20, ema30.
+    Now also includes MACD related columns: ema12, ema26, dif, dea, macd.
+    """
+    metadata = MetaData()
+    inspector = inspect(engine)
+    if not inspector.has_table(table_name_str):
+        Table(
+            table_name_str, metadata,
+            Column('open_time', DateTime, primary_key=True),
+            Column('close', Float, nullable=False), # Assuming close price is always available
+            Column('ema5', Float, nullable=True),
+            Column('ema10', Float, nullable=True),
+            Column('ema20', Float, nullable=True),
+            Column('ema30', Float, nullable=True),
+            Column('ema12', Float, nullable=True), # MACD related
+            Column('ema26', Float, nullable=True), # MACD related
+            Column('dif', Float, nullable=True),    # MACD related
+            Column('dea', Float, nullable=True),    # MACD related
+            Column('macd', Float, nullable=True)   # MACD related
+        )
+        metadata.create_all(engine)
+        logging.info(f"Table {table_name_str} created/updated successfully with MACD columns.")
+    # else:
+        # logging.debug(f"Table {table_name_str} already exists.") # Less verbose
+    return Table(table_name_str, metadata, autoload_with=engine)
+
+def analyze_data_and_store_emas():
+    """
+    Fetches K-line data, calculates specified EMAs (5, 10, 20, 30), 
+    and stores them in a PostgreSQL database table named ma_<SYMBOL>.
+    Uses INSERT ON CONFLICT DO UPDATE (upsert) for PostgreSQL.
     """
     session = Session()
-    # 获取logger实例，main函数中已配置basicConfig
     logger = logging.getLogger(__name__) 
     try:
-        logger.info(f"开始分析数据，符号: {SYMBOL}")
-        # 构建表名，使用原始SYMBOL大小写
+        logger.info(f"开始分析数据并存储EMA，符号: {SYMBOL}")
+        
         KLine_table_name = f"KLine_{SYMBOL}"
-        logger.info(f"查询表: {KLine_table_name} 中 symbol 为 {SYMBOL} 的数据")
+        # logger.debug(f"查询表: {KLine_table_name} 中 symbol 为 {SYMBOL} 的数据")
         
-        KLine_data = dbselect_common(session, KLine_table_name, "symbol", SYMBOL)
+        # Use the new dbget_kline function, ensuring data is sorted by open_time ascending
+        KLine_data = dbget_kline(session, KLine_table_name, SYMBOL, order_by_column='open_time', ascending=True)
         
-        logger.info(f"从数据库获取的 KLine_data 类型: {type(KLine_data)}")
-        if hasattr(KLine_data, '__len__'):
-            logger.info(f"KLine_data 长度: {len(KLine_data)}")
-        
-        if KLine_data and isinstance(KLine_data, list) and len(KLine_data) > 0:
-            logger.info(f"KLine_data (前几条记录示例): {KLine_data[:min(3, len(KLine_data))]}")
-        elif KLine_data is not None:
-             logger.info(f"KLine_data (内容): {KLine_data}")
-
         if not KLine_data: 
-            logger.warning(f"未找到符号为 {SYMBOL} 的K线数据，或数据为空。KLine_data: {KLine_data}")
+            logger.warning(f"未找到符号为 {SYMBOL} 的K线数据，或数据为空。")
             return
 
-        logger.info("将K线数据转换为DataFrame...")
+        # logger.debug("将K线数据转换为DataFrame...")
         df = KLine_to_dataframe(KLine_data)
         
-        logger.info("DataFrame转换完成。DataFrame信息:")
-        logger.info(f"DataFrame (前5行):\\n{df.head().to_string()}")
-        logger.info(f"DataFrame dtypes:\\n{df.dtypes.to_string()}")
-
         if df.empty:
             logger.warning(f"转换后的DataFrame为空，符号: {SYMBOL}")
             return
         
-        if 'close' not in df.columns:
-            logger.error("'close'列不在DataFrame中。无法计算MACD。")
-            logger.info(f"DataFrame 列: {df.columns}")
+        # IMPORTANT: Ensure DataFrame is sorted by open_time for correct EMA calculation
+        df.sort_values(by='open_time', inplace=True)
+        # logger.debug(f"DataFrame sorted by open_time. Head:\n{df.head().to_string()}")
+
+
+        if 'close' not in df.columns or df['close'].isnull().all():
+            logger.error(f"'close'列不存在或全部为NaN，无法计算EMA。DataFrame columns: {df.columns}")
             return
 
-        if df['close'].isnull().all():
-            logger.warning("DataFrame中的'close'列全部为NaN。MACD计算可能返回全部NaN。")
-        elif df['close'].isnull().any():
-            logger.warning("DataFrame中的'close'列包含NaN值。这可能影响MACD计算。")
+        # logger.debug("计算EMA指标 (5, 10, 20, 30)...")
+        ema_periods_to_calculate = [5, 10, 20, 30]
+        df = calculate_multiple_emas(df, periods=ema_periods_to_calculate)
         
-        logger.info("计算MACD指标...")
-        df = calculate_macd(df)
-        logger.info("MACD指标计算完成。")
-        # 动态构建要显示的列，确保它们存在于DataFrame中
-        macd_related_cols = ['open_time', 'close', 'macd']
-        existing_macd_debug_cols = [col for col in ['ema12', 'ema26', 'dif', 'dea'] if col in df.columns]
-        display_cols_after_macd = macd_related_cols + existing_macd_debug_cols
-        logger.info(f"计算MACD后的DataFrame (前5行，相关列):\\n{df[display_cols_after_macd].head().to_string()}")
+        # Calculate MACD as well to store it in the same table
+        logger.info("Calculating MACD indicators...")
+        df = calculate_macd(df) # calculate_macd adds ema12, ema26, dif, dea, macd
 
-        logger.info("准备打印结果...")
-        required_print_cols = ['open_time', 'close', 'macd']
-        missing_cols = [col for col in required_print_cols if col not in df.columns]
+        # Columns to select for storage, must match create_ma_table_if_not_exists
+        cols_to_store = [
+            'open_time', 'close', 
+            'ema5', 'ema10', 'ema20', 'ema30', # Standard EMAs
+            'ema12', 'ema26', 'dif', 'dea', 'macd' # MACD related columns
+        ]
+        
+        missing_cols = [col for col in cols_to_store if col not in df.columns]
         if missing_cols:
-            logger.error(f"DataFrame中缺少用于打印的列: {missing_cols}")
-            logger.info(f"可用列: {df.columns}")
+            # This case should ideally be handled by calculate_multiple_emas adding NA columns
+            logger.error(f"DataFrame中缺少必要的列进行存储: {missing_cols}. 可用列: {df.columns}")
             return
+
+        data_to_store_df = df[cols_to_store].copy()
+        # Replace Pandas NaT/NaN with None for SQL compatibility, especially for nullable Float columns
+        data_to_store_df = data_to_store_df.where(pd.notnull(data_to_store_df), None)
         
-        print("\\n--- 分析结果 ---")
-        print(df[required_print_cols])
-        print("--- 分析结果结束 ---\\n")
-        logger.info("结果已打印到控制台。")
+        # Drop rows where 'open_time' or 'close' is None (or NaT) as they are essential
+        data_to_store_df.dropna(subset=['open_time', 'close'], inplace=True)
+
+
+        if data_to_store_df.empty:
+            logger.warning(f"没有有效的EMA数据行可供存储 (after NaN/NaT handling)，符号: {SYMBOL}")
+            return
+
+        ma_db_table_name = f"ma_{SYMBOL.lower()}" # Consistent lowercase table name
+        # logger.debug(f"准备将数据写入数据库表: {ma_db_table_name}")
+        
+        ma_table = create_ma_table_if_not_exists(engine, ma_db_table_name)
+        
+        records_to_insert = data_to_store_df.to_dict(orient='records')
+
+        if not records_to_insert:
+            logger.info(f"没有记录需要插入/更新到表 {ma_db_table_name}.")
+            return
+
+        logger.info(f"共 {len(records_to_insert)} 条有效记录准备插入/更新到 {ma_db_table_name}.")
+
+        with engine.connect() as connection:
+            trans = connection.begin()
+            try:
+                for record_dict in records_to_insert:
+                    # Ensure 'open_time' is Python datetime, already handled by KLine_to_dataframe + to_dict
+                    # Filter record_dict to only include keys that are actual columns in ma_table
+                    valid_record = {key: value for key, value in record_dict.items() if key in ma_table.columns.keys()}
+                    
+                    if not valid_record or 'open_time' not in valid_record or valid_record['open_time'] is None:
+                        logger.warning(f"Skipping invalid record for upsert: {record_dict}")
+                        continue
+
+                    stmt = pg_insert(ma_table).values(valid_record)
+                    
+                    # Define columns to update on conflict, excluding the primary key 'open_time'
+                    # and only if the column exists in the current valid_record being processed
+                    update_values = {
+                        col.name: stmt.excluded[col.name]
+                        for col in ma_table.columns 
+                        if col.name != 'open_time' and col.name in valid_record
+                    }
+                    
+                    if update_values: # Only add set_ if there are columns to update
+                        stmt = stmt.on_conflict_do_update(
+                            index_elements=['open_time'], 
+                            set_=update_values
+                        )
+                    else: # If no columns to update (e.g., only PK was inserted and it conflicts)
+                        stmt = stmt.on_conflict_do_nothing(index_elements=['open_time'])
+                    
+                    connection.execute(stmt)
+                trans.commit()
+                logger.info(f"成功将 {len(records_to_insert)} 条EMA数据插入/更新到表 {ma_db_table_name}")
+            except Exception as e_inner:
+                trans.rollback()
+                logger.error(f"插入/更新数据到 {ma_db_table_name} 时发生数据库错误: {e_inner}", exc_info=True)
+                # Do not re-raise here if main loop should continue for other symbols or operations
+            finally:
+                # The connection is automatically closed when exiting the 'with engine.connect() as connection:' block
+                pass
+
 
     except Exception as e:
-        logger.error(f"分析数据时发生严重错误: {e}", exc_info=True) # exc_info=True 会记录完整的错误回溯
+        logger.error(f"在 analyze_data_and_store_emas 中分析和存储EMA数据时发生错误: {e}", exc_info=True)
     finally:
-        logger.info("关闭数据库会话。")
+        # logger.debug("关闭数据库会话 (analyze_data_and_store_emas)。")
         session.close()
 
 def main():
     """
     用于测试调用的主函数。
     """
-    # 配置日志，以便在直接运行此脚本时能看到输出
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    logger = logging.getLogger(__name__)
+    logging.basicConfig(level=logging.INFO, 
+                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                        handlers=[logging.StreamHandler()]) # Ensure logs go to console
+    logger = logging.getLogger(__name__) # Get logger for main
     logger.info("开始执行 DataAnalyze.py 的 main 函数...")
     
-    # 你也可以在这里调用 StartCaculate() 如果它是你想测试的主要流程
-    # logger.info("调用 StartCaculate()...")
-    # StartCaculate()
-    # logger.info("StartCaculate() 执行完毕。")
+    logger.info("调用 StartCaculateMACD() (主要用于MACD计算)...")
+    StartCaculateMACD()
+    logger.info("StartCaculateMACD() 执行完毕。")
 
-    logger.info("调用 analyze_data()...")
-    analyze_data()
-    logger.info("analyze_data() 执行完毕。")
+    logger.info("调用 analyze_data_and_store_emas() (用于EMA计算和存储)...")
+    analyze_data_and_store_emas() # Renamed function
+    logger.info("analyze_data_and_store_emas() 执行完毕。")
     
     logger.info("DataAnalyze.py 的 main 函数执行完毕。")
 
