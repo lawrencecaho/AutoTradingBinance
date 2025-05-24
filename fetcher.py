@@ -77,7 +77,7 @@ if __name__ == '__main__':
 
 # K Line
 # 需要(symbol, interval, dbr=False, session=None, table=None,startTime=None, endTime=None, limit=100)
-def get_kline(symbol, interval, dbr, session, table,
+def get_kline(symbol, interval, dbr, session, table=None,
               startTime=None, endTime=None, limit=100):
     """
     获取 Binance K 线数据，并可选择写入数据库。
@@ -87,7 +87,7 @@ def get_kline(symbol, interval, dbr, session, table,
         interval   - K线周期（如 "1h", "1d"）
         dbr        - 是否写入数据库（True 则执行 insert_kline）
         session    - SQLAlchemy 数据库 session（必填于 dbr=True）
-        table      - SQLAlchemy 的表对象（必填于 dbr=True）
+        table      - SQLAlchemy 的表对象（dbr=True时可选，如果为None会自动创建）
         startTime  - 开始时间（Unix 毫秒）
         endTime    - 结束时间（Unix 毫秒）
         limit      - 获取数量，最大 1000
@@ -112,8 +112,14 @@ def get_kline(symbol, interval, dbr, session, table,
         kline_data = response.json()
 
         if dbr:
-            if session is None or table is None:
-                raise ValueError("写入数据库时 session 和 table 参数不能为空")
+            if session is None:
+                raise ValueError("写入数据库时 session 参数不能为空")
+                
+            # 如果表为None，使用create_kline_table_if_not_exists创建表
+            if table is None:
+                from database import create_kline_table_if_not_exists, engine
+                table = create_kline_table_if_not_exists(engine, symbol.upper())
+                
             for raw_k in kline_data:
                 parsed_kline = parse_kline(raw_k)
 

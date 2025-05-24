@@ -2,7 +2,7 @@
 database.py
 - 提供动态表创建和数据库初始化功能
 """
-from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Table, MetaData, asc, desc # Added asc, desc
+from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Table, MetaData, asc, desc, inspect # Added inspect
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timezone, timedelta
@@ -215,6 +215,50 @@ def Time_Discrete_Check(table_name: str, time_column_name: str, start_time: Opti
     finally:
         session.close()  # 确保会话被关闭
 
+def create_kline_table_if_not_exists(engine, symbol_value):
+    """
+    创建K线数据表如果不存在
+    表名格式为 KLine_SYMBOLVALUE (例如 KLine_BTCUSDT)
+    主键为自定义id，并保持与insert_kline函数相同的字段结构
+    
+    Args:
+        engine: SQLAlchemy engine
+        symbol_value: 交易对的值 (e.g., "BTCUSDT")
+        
+    Returns:
+        Table: 创建或获取的表对象
+    """
+    metadata_obj = MetaData()
+    inspector = inspect(engine)
+    table_name = f"KLine_{symbol_value}"
+    
+    if inspector.has_table(table_name):
+        # 如果表已存在，返回它
+        return Table(table_name, metadata_obj, autoload_with=engine)
+    
+    # 定义表结构，与insert_kline函数相匹配
+    kline_table = Table(
+        table_name,
+        metadata_obj,
+        Column('symbol', String, index=True),
+        Column('open', Float),
+        Column('high', Float),
+        Column('low', Float),
+        Column('close', Float),
+        Column('volume', Float),
+        Column('open_time', DateTime(timezone=True), primary_key=True),  # 使用带时区的DateTime作为主键
+        Column('close_time', DateTime(timezone=True)),  # 使用带时区的DateTime
+        Column('quote_asset_volume', Float),
+        Column('num_trades', Integer),
+        Column('taker_buy_base_vol', Float),
+        Column('taker_buy_quote_vol', Float),
+        Column('timestamp', DateTime(timezone=True))  # 使用带时区的DateTime
+    )
+    
+    logging.info(f"创建K线表: {table_name}")
+    kline_table.create(engine)
+    return kline_table
+
 def insert_price(session, Price, symbol, price, timestamp):
     """
     插入价格数据，id为自定义格式（字符串）
@@ -232,26 +276,36 @@ def insert_price(session, Price, symbol, price, timestamp):
 
 # 存储K线数据
 def insert_kline(session, table, symbol, kline):
-    custom_id = generate_custom_id(session, table)
+    # 将时间戳转换为datetime对象，UTC时区
+    open_time = datetime.fromtimestamp(kline['open_time'] / 1000, tz=timezone.utc)
+    close_time = datetime.fromtimestamp(kline['close_time'] / 1000, tz=timezone.utc)
+    
     kline_entry = table.insert().values(
-        id=custom_id,
         symbol=symbol,
         open=float(kline['open']),
         high=float(kline['high']),
         low=float(kline['low']),
         close=float(kline['close']),
         volume=float(kline['volume']),
-        open_time=datetime.fromtimestamp(kline['open_time'] / 1000, tz=timezone.utc),
-        close_time=datetime.fromtimestamp(kline['close_time'] / 1000, tz=timezone.utc),
+        open_time=open_time,  # 使用转换后的datetime对象
+        close_time=close_time,  # 使用转换后的datetime对象
         quote_asset_volume=float(kline['quote_asset_volume']),
         num_trades=int(kline['num_trades']),
         taker_buy_base_vol=float(kline['taker_buy_base_vol']),
         taker_buy_quote_vol=float(kline['taker_buy_quote_vol']),
         timestamp=datetime.now(timezone.utc)
     )
-    session.execute(kline_entry)
-    session.commit()
-    return custom_id
+    
+    try:
+        session.execute(kline_entry)
+        session.commit()
+        return open_time  # 返回datetime对象作为主键
+    except Exception as e:
+        session.rollback()
+        logging.error(f"插入K线数据失败: {e}", exc_info=True)
+        # 如果是主键冲突错误，可以考虑实现upsert逻辑或者忽略
+        # 此处简单返回None表示插入失败
+        return None
 
 # 存储订单信息
 def insert_order(session, table, symbol, side, price, quantity):

@@ -5,7 +5,7 @@ import os
 from typing import Optional, Dict, Any
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from fastapi import HTTPException, status
+from fastapi import Header, HTTPException, status  # Add Header
 import logging
 from config import DATABASE_URL
 
@@ -91,3 +91,37 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def get_password_hash(password: str) -> str:
     """生成密码哈希"""
     return pwd_context.hash(password)
+
+async def get_current_user_from_token(authorization: str = Header(None)) -> Dict[str, Any]:  # Added type hint for return
+    print("!!! AUTH: get_current_user_from_token FUNCTION ENTERED (via print) !!!")
+    logging.getLogger().info("!!! AUTH: get_current_user_from_token FUNCTION ENTERED (via root logger) !!!")
+    logger.info("get_current_user_from_token called (via named logger myfastapi.auth)") # Clarified logger name
+    logger.debug(f"Authorization header: {authorization}") # New log
+    """验证 JWT 令牌并返回当前用户"""
+    if not authorization:
+        logger.warning("Authorization header missing") # New log
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未提供认证令牌",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 检查令牌格式
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        logger.warning(f"Invalid authentication scheme: {scheme}") # New log
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="认证方案无效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 验证令牌
+    try:
+        payload = verify_token(token)
+        logger.info("Token verified successfully") # New log
+        return payload
+    except HTTPException as e: # Catch HTTPException from verify_token
+        logger.error(f"Token verification failed: {e.detail}") # New log
+        raise e # Re-raise the exception
+    # 如果验证成功，返回用户信息

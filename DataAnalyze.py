@@ -12,14 +12,14 @@ from sqlalchemy import Table, Column, DateTime, Float, MetaData, inspect, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 """
-| MA 类型 | 意义（基于每根 K 线）   | `limit` 最小值 | 示例 API 参数 (`interval=1h`) | 说明             |
-| ----- | -------------- | ----------- | ------------------------- | --------------------------- |
-| MA5   | 最近 5 根 K 线均值   | 5           | `limit=5`                 | 快速变化，适合短线分析      |
-| MA10  | 最近 10 根 K 线均值  | 10          | `limit=10`                | 短期趋势判断               |
-| MA20  | 最近 20 根 K 线均值  | 20          | `limit=20`                | 常见中期趋势线          |
-| MA30  | 最近 30 根 K 线均值  | 30          | `limit=30`                | 比 MA20 平滑                   |
-| MA50  | 最近 50 根 K 线均值  | 50          | `limit=50`                | 可靠的中长期线            |
-| MA100 | 最近 100 根 K 线均值 | 100         | `limit=100`               | 代表长期趋势                |
+| MA 类型 | 意义（基于每根 K 线）   | `limit` 最小值 | 示例 API 参数 (`interval=1h
+| ----- | -------------- | ----------- | ------------------------- | ----------------------------- |
+| MA5   | 最近 5 根 K 线均值   | 5           | `limit=5`                 | 快速变化，适合短线分析          |
+| MA10  | 最近 10 根 K 线均值  | 10          | `limit=10`                | 短期趋势判断                   |
+| MA20  | 最近 20 根 K 线均值  | 20          | `limit=20`                | 常见中期趋势线              |
+| MA30  | 最近 30 根 K 线均值  | 30          | `limit=30`                | 比 MA20 平滑                     |
+| MA50  | 最近 50 根 K 线均值  | 50          | `limit=50`                | 可靠的中长期线                |
+| MA100 | 最近 100 根 K 线均值 | 100         | `limit=100`               | 代表长期趋势                    |
 | MA200 | 最近 200 根 K 线均值 | 200         | `limit=200`（需分批获取）   | 经典长期趋势线，Binance 最多返回 1000 条 |
 """
 
@@ -100,7 +100,7 @@ def KLine_to_dataframe(KLine_data):
     将数据库返回的K线数据 (元组列表) 转换为 pandas DataFrame
     """
     columns = [
-        'id', 'symbol', 'open', 'high', 'low', 'close', 'volume',
+        'symbol', 'open', 'high', 'low', 'close', 'volume',
         'open_time', 'close_time', 'quote_asset_volume', 'num_trades',
         'taker_buy_base_vol', 'taker_buy_quote_vol', 'timestamp'
     ]
@@ -114,7 +114,8 @@ def KLine_to_dataframe(KLine_data):
 
     time_cols = ['open_time', 'close_time', 'timestamp']
     for col in time_cols:
-        df[col] = pd.to_datetime(df[col], errors='coerce') # Coerce errors to NaT
+        # 保留时区信息，如果存在
+        df[col] = pd.to_datetime(df[col], errors='coerce', utc=True) 
         
     return df
 
@@ -142,29 +143,75 @@ def create_ma_table_if_not_exists(engine, table_name_str):
     The table will have open_time as the primary key.
     Column names for EMAs are fixed as ema5, ema10, ema20, ema30.
     Now also includes MACD related columns: ema12, ema26, dif, dea, macd.
+    And ROC columns for all EMAs and MACD components.
     """
     metadata = MetaData()
     inspector = inspect(engine)
+    
+    # Define all columns that should be in the table
+    # Keep existing columns and add new ROC columns
+    # Sort alphabetically for consistency and readability
+    table_columns = [
+        Column('open_time', DateTime(timezone=True), primary_key=True),  # 确保使用带时区的DateTime
+        Column('close', Float, nullable=False),
+        Column('dea', Float, nullable=True),
+        Column('dea_roc', Float, nullable=True), # New
+        Column('dif', Float, nullable=True),
+        Column('dif_roc', Float, nullable=True), # New
+        Column('ema5', Float, nullable=True),
+        Column('ema5_roc', Float, nullable=True), # New
+        Column('ema10', Float, nullable=True),
+        Column('ema10_roc', Float, nullable=True), # New
+        Column('ema12', Float, nullable=True),
+        Column('ema20', Float, nullable=True),
+        Column('ema20_roc', Float, nullable=True), # New
+        Column('ema26', Float, nullable=True),
+        Column('ema30', Float, nullable=True),
+        Column('ema30_roc', Float, nullable=True), # New
+        Column('macd', Float, nullable=True),
+        Column('macd_roc', Float, nullable=True) # New
+    ]
+
     if not inspector.has_table(table_name_str):
-        Table(
-            table_name_str, metadata,
-            Column('open_time', DateTime, primary_key=True),
-            Column('close', Float, nullable=False), # Assuming close price is always available
-            Column('ema5', Float, nullable=True),
-            Column('ema10', Float, nullable=True),
-            Column('ema20', Float, nullable=True),
-            Column('ema30', Float, nullable=True),
-            Column('ema12', Float, nullable=True), # MACD related
-            Column('ema26', Float, nullable=True), # MACD related
-            Column('dif', Float, nullable=True),    # MACD related
-            Column('dea', Float, nullable=True),    # MACD related
-            Column('macd', Float, nullable=True)   # MACD related
-        )
+        Table(table_name_str, metadata, *table_columns)
         metadata.create_all(engine)
-        logging.info(f"Table {table_name_str} created/updated successfully with MACD columns.")
-    # else:
-        # logging.debug(f"Table {table_name_str} already exists.") # Less verbose
+        logging.info(f"Table {table_name_str} created successfully with all ROC columns.")
+    else:
+        # Check for missing columns and add them if necessary
+        existing_table = Table(table_name_str, metadata, autoload_with=engine)
+        existing_column_names = [col.name for col in existing_table.columns]
+        
+        # Find which of the defined columns are missing
+        missing_cols_to_add = []
+        for defined_col in table_columns:
+            if defined_col.name not in existing_column_names:
+                missing_cols_to_add.append(defined_col)
+        
+        if missing_cols_to_add:
+            logging.info(f"Table {table_name_str} exists. Attempting to add missing columns: {[col.name for col in missing_cols_to_add]}")
+            with engine.connect() as connection:
+                for col_to_add in missing_cols_to_add:
+                    # Construct the ADD COLUMN SQL statement carefully
+                    col_type_str = str(col_to_add.type.compile(engine.dialect))
+                    # Default to NULLABLE if not specified, though our Float columns are nullable=True
+                    alter_sql = f"ALTER TABLE {table_name_str} ADD COLUMN IF NOT EXISTS {col_to_add.name} {col_type_str}"
+                    try:
+                        connection.execute(text(alter_sql))
+                        logging.info(f"Successfully added column {col_to_add.name} to {table_name_str}.")
+                    except Exception as e_alter:
+                        logging.error(f"Failed to add column {col_to_add.name} to {table_name_str}: {e_alter}")
+                connection.commit() # Commit after all ALTER TABLE statements
+            # Re-autoload the table to reflect changes for the return value
+            metadata.clear() # Clear old metadata
+            existing_table = Table(table_name_str, metadata, autoload_with=engine)
+            logging.info(f"Table {table_name_str} schema updated.")
+        # else:
+            # logging.debug(f"Table {table_name_str} already exists and has all required columns.")
+
     return Table(table_name_str, metadata, autoload_with=engine)
+
+def calculator_roc(df, col, epsilon=1e-8):
+    return ((df[col] - df[col].shift(1)) / (df[col].shift(1).abs() + epsilon)) * 100
 
 def analyze_data_and_store_emas():
     """
@@ -179,6 +226,10 @@ def analyze_data_and_store_emas():
         
         KLine_table_name = f"KLine_{SYMBOL}"
         # logger.debug(f"查询表: {KLine_table_name} 中 symbol 为 {SYMBOL} 的数据")
+        
+        # 检查表是否存在，如果不存在则创建
+        from database import create_kline_table_if_not_exists
+        create_kline_table_if_not_exists(engine, SYMBOL)
         
         # Use the new dbget_kline function, ensuring data is sorted by open_time ascending
         KLine_data = dbget_kline(session, KLine_table_name, SYMBOL, order_by_column='open_time', ascending=True)
@@ -211,11 +262,29 @@ def analyze_data_and_store_emas():
         logger.info("Calculating MACD indicators...")
         df = calculate_macd(df) # calculate_macd adds ema12, ema26, dif, dea, macd
 
+        # Calculate ROC for EMAs and MACD components
+        logger.info("Calculating ROC for EMAs and MACD components...")
+        roc_source_columns = []
+        for period in ema_periods_to_calculate:
+            roc_source_columns.append(f'ema{period}')
+        roc_source_columns.extend(['macd', 'dif', 'dea'])
+
+        for col_name in roc_source_columns:
+            if col_name in df.columns and not df[col_name].isnull().all():
+                df[f'{col_name}_roc'] = calculator_roc(df, col_name)
+            else:
+                df[f'{col_name}_roc'] = pd.NA # Assign pandas NA if source column is missing or all NaN
+                logger.warning(f"Source column {col_name} for ROC calculation is missing or all NaN. {col_name}_roc set to NA.")
+
+
         # Columns to select for storage, must match create_ma_table_if_not_exists
+        # Ensure all ROC columns are included
         cols_to_store = [
             'open_time', 'close', 
-            'ema5', 'ema10', 'ema20', 'ema30', # Standard EMAs
-            'ema12', 'ema26', 'dif', 'dea', 'macd' # MACD related columns
+            'ema5', 'ema10', 'ema20', 'ema30', 
+            'ema12', 'ema26', 'dif', 'dea', 'macd',
+            'ema5_roc', 'ema10_roc', 'ema20_roc', 'ema30_roc', # EMA ROCs
+            'macd_roc', 'dif_roc', 'dea_roc' # MACD component ROCs
         ]
         
         missing_cols = [col for col in cols_to_store if col not in df.columns]

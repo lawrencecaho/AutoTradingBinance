@@ -16,22 +16,88 @@ import json
 import time
 from typing import Dict, Any, Optional
 import logging
-#from config import DATABASE_URL #as DATABASE_URL
+from fastapi import FastAPI, HTTPException, Depends # Add FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware # Add CORSMiddleware
+from sqlalchemy.orm import Session # Add Session
+from database import dbselect_common, Session # Add dbselect_common and import Session from database.py
 
 # 配置日志
-logging.basicConfig(
-    level=logging.DEBUG,  # 改为DEBUG级别
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename='fastapi.log',
-    filemode='w'
-)
-logger = logging.getLogger(__name__)
+LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default_formatter": {
+            "()": "uvicorn.logging.DefaultFormatter",
+            "fmt": "%(levelprefix)s %(message)s", # Simplified for console
+            "use_colors": None,
+        },
+        "file_formatter": { # For our application file log
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
+    },
+    "handlers": {
+        "console_handler": { # Uvicorn's console output
+            "formatter": "default_formatter",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stderr",
+        },
+        "app_file_handler": { # Our application log file
+            "formatter": "file_formatter",
+            "class": "logging.FileHandler",
+            "filename": "fastapi.log", # Relative to where script is run
+            "mode": "w",
+        },
+    },
+    "loggers": {
+        "uvicorn": { # Uvicorn's own operational logs
+            "handlers": ["console_handler"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "uvicorn.error": { # Uvicorn's error logs (e.g., startup errors)
+            "handlers": ["console_handler"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "uvicorn.access": { # Uvicorn's access logs (requests)
+            "handlers": ["console_handler", "app_file_handler"], # Also send access logs to our file for completeness
+            "level": "INFO",
+            "propagate": False,
+        },
+        "myfastapi": { # Logger for the application modules
+            "handlers": ["app_file_handler", "console_handler"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "__main__": { # Logger for main.py when run directly
+            "handlers": ["app_file_handler", "console_handler"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+    },
+    "root": { # Root logger configuration
+        "handlers": ["app_file_handler"], # All uncaught logs go here
+        "level": "DEBUG", # Set root logger level to DEBUG
+    },
+}
 
-# FastAPI相关导入
-from fastapi import FastAPI, HTTPException, Header, Depends, status
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+logger = logging.getLogger(__name__) # This will now use the '__main__' config from LOGGING_CONFIG
+
+# 定义模型
+from pydantic import BaseModel # Existing import
 from contextlib import asynccontextmanager
+
+# 定义模型
+class EncryptedResponse(BaseModel): # MOVED & CORRECTED: Definition for EncryptedResponse
+    data: str
+    timestamp: int
+    signature: str
+
+class SecureRequest(BaseModel): # MOVED & CORRECTED: Definition for SecureRequest
+    encrypted_data: str
+    timestamp: int
+    signature: Optional[str] = None
 
 # 加密相关导入
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
@@ -39,7 +105,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.backends import default_backend
 
 # 项目内部导入
-from myfastapi.auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, verify_token
+from myfastapi.auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, verify_token, get_current_user_from_token # MODIFIED: Added get_current_user_from_token
 from myfastapi.authtotp import verify_totp as verify_totp_code
 from myfastapi.security import (
     decrypt_data,
@@ -56,18 +122,7 @@ from myfastapi.security import (
     hybrid_encrypt_with_client_key
 )
 from myfastapi.chunked_encryption import chunk_encrypt_large_data
-from database import Session, dbselect_common
-
-# 定义模型
-class SecureRequest(BaseModel):
-    encrypted_data: str
-    timestamp: int
-    signature: str | None = None
-
-class EncryptedResponse(BaseModel):
-    data: str
-    timestamp: int
-    signature: str
+from myfastapi.echarts import router as echarts_router # 从 .echarts 导入 router 并重命名以避免冲突
 
 # 应用生命周期管理
 @asynccontextmanager
@@ -88,9 +143,16 @@ async def lifespan(app: FastAPI):
         
         # 验证数据库连接
         try:
-            with Session() as session:
-                session.connection()
-            logger.info("数据库连接验证成功")
+            # 创建一个新的数据库会话
+            session = Session()
+            try:
+                # 测试连接 - 使用engine直接连接测试
+                from sqlalchemy import text
+                session.execute(text("SELECT 1"))
+                logger.info("数据库连接验证成功")
+            finally:
+                # 确保会话关闭
+                session.close()
         except Exception as e:
             logger.error(f"数据库连接失败: {str(e)}")
             raise
@@ -294,6 +356,7 @@ async def verify_otp(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # 创建一个数据库会话
     session = Session()
     try:
         # 验证用户
@@ -394,30 +457,6 @@ async def register_client_key(request: dict):
         logger.error(f"注册客户端公钥失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# 添加JWT验证的依赖项
-async def get_current_user_from_token(authorization: str = Header(None)):
-    """验证 JWT 令牌并返回当前用户"""
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="未提供认证令牌",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # 检查令牌格式
-    scheme, _, token = authorization.partition(" ")
-    if scheme.lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="认证方案无效",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # 验证令牌
-    return verify_token(token)
-    # 如果验证成功，返回用户信息
-
-
 # 响应统计数据 /statistics & /health
 @app.get("/statistics")
 async def statistics(current_user: Dict[str, Any] = Depends(get_current_user_from_token)):
@@ -460,24 +499,25 @@ async def health_check(current_user: Dict[str, Any] = Depends(get_current_user_f
         "user": user_id
     }
 
-@app.get("/MA-data")
-async def root():
-    """
-    获取K线数据的示例端点。
-    这里可以添加获取K线数据的逻辑。
-    """
-    # 示例数据，实际应用中应填充真实K线数据
-    MA_data = {
-        "symbol": "BTCUSDT",
-        "interval": "1h",
-        "data": [
-            {"timestamp": 1633072800000, "open": 45000, "high": 46000, "low": 44000, "close": 45500},
-            {"timestamp": 1633076400000, "open": 45500, "high": 46500, "low": 45000, "close": 46000}
-        ]
-    }
-    return MA_data
+app.include_router(echarts_router, prefix="/echarts") # 您可以为这些路由添加一个前缀，例如 /echarts
+
 
 # 启动服务器
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    
+    # 记录启动信息
+    logger.info("启动服务器...")
+    
+    try:
+        # 使用模块导入字符串而不是app对象
+        uvicorn.run(
+            "myfastapi.main:app",
+            host="0.0.0.0", 
+            port=8000, 
+            reload=True,
+            log_config=LOGGING_CONFIG
+        )
+    except Exception as e:
+        logger.error(f"启动服务器失败: {str(e)}")
+        raise
