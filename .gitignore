@@ -19,3 +19,4 @@ myfastapi/create_test_user.py
 myfastapi/Security/
 myfastapi/fastcode.md
 test1.py
+.env.production
