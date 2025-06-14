@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
 # 导入项目内部模块
-from myfastapi.security import hybrid_encrypt_with_client_key
+from security import hybrid_encrypt_with_client_key
 
 # 配置日志
 logger = logging.getLogger(__name__)

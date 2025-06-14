@@ -274,38 +274,157 @@ def load_or_generate_rsa_keys(force_generate: bool = False) -> Tuple[rsa.RSAPriv
         logger.error(f"密钥生成或加载失败: {str(e)}")
         raise
 
+# API 密钥有效期（天数）
+API_SECRET_VALIDITY_DAYS = 7
+
+def get_api_secret_timestamp_path() -> Path:
+    """获取API密钥时间戳文件路径"""
+    return KEY_DIRECTORY / 'api_secret.timestamp'
+
+def save_api_secret_timestamp():
+    """保存API密钥生成时间戳"""
+    try:
+        timestamp_path = get_api_secret_timestamp_path()
+        current_time = datetime.now().isoformat()
+        with open(timestamp_path, 'w') as f:
+            f.write(current_time)
+        timestamp_path.chmod(0o600)
+        logger.debug(f"保存API密钥时间戳: {current_time}")
+    except Exception as e:
+        logger.error(f"保存时间戳失败: {str(e)}")
+
+def is_api_secret_expired() -> bool:
+    """检查API密钥是否过期"""
+    try:
+        timestamp_path = get_api_secret_timestamp_path()
+        if not timestamp_path.exists():
+            logger.info("时间戳文件不存在，密钥需要重新生成")
+            return True
+        
+        with open(timestamp_path, 'r') as f:
+            timestamp_str = f.read().strip()
+        
+        # 解析时间戳
+        creation_time = datetime.fromisoformat(timestamp_str)
+        current_time = datetime.now()
+        
+        # 计算时间差
+        time_diff = current_time - creation_time
+        
+        # 检查是否超过有效期
+        if time_diff.days >= API_SECRET_VALIDITY_DAYS:
+            logger.info(f"API密钥已过期 ({time_diff.days} 天 >= {API_SECRET_VALIDITY_DAYS} 天)")
+            return True
+        else:
+            logger.debug(f"API密钥仍有效 ({time_diff.days} 天 < {API_SECRET_VALIDITY_DAYS} 天)")
+            return False
+            
+    except Exception as e:
+        logger.warning(f"检查密钥过期状态失败: {str(e)}，将重新生成密钥")
+        return True
+
+# 生成并保存 API 密钥
+def generate_and_save_api_secret() -> bytes:
+    """生成并保存新的 API 密钥"""
+    try:
+        # 生成32字节的密码学安全随机密钥
+        api_secret = secrets.token_bytes(32)
+        
+        # 保存到文件
+        api_secret_path = KEY_DIRECTORY / 'api_secret.key'
+        with open(api_secret_path, 'wb') as f:
+            f.write(api_secret)
+        
+        # 设置文件权限（仅所有者可读写）
+        api_secret_path.chmod(0o600)
+        
+        # 保存生成时间戳
+        save_api_secret_timestamp()
+        
+        logger.info("已生成并保存新的 API 密钥")
+        return api_secret
+    except Exception as e:
+        logger.error(f"生成 API 密钥失败: {str(e)}")
+        raise
+
 # 获取 API 密钥
 def get_api_secret() -> bytes:
-    """获取用于 HMAC 签名的 API 密钥"""
-    try:
-        # 尝试从 Security 文件夹加载 API 密钥
-        api_secret_path = KEY_DIRECTORY / 'api_secret.key'
-        
-        if api_secret_path.exists():
-            with open(api_secret_path, 'rb') as f:
-                logger.info("从 Security 文件夹加载 API 密钥")
-                return f.read()
-
-        # 如果文件不存在，尝试从环境变量中获取
-        secret = os.environ.get("API_SECRET_KEY")
-        if secret is not None:
-            logger.info("从环境变量加载 API 密钥")
-            return secret.encode()
-            
-        # 如果环境变量也没有，从 config.py 获取
+    """获取用于 HMAC 签名的 API 密钥（支持自动更新）"""
+    api_secret_path = KEY_DIRECTORY / 'api_secret.key'
+    
+    # 检查密钥是否过期
+    if is_api_secret_expired():
+        logger.info("API密钥已过期或不存在，正在重新生成")
+        return generate_and_save_api_secret()
+    
+    # 尝试从文件加载现有密钥
+    if api_secret_path.exists():
         try:
-            from config import API_SECRET_KEY
-            if API_SECRET_KEY:
-                logger.info("从配置文件加载 API 密钥")
-                return API_SECRET_KEY.encode() if isinstance(API_SECRET_KEY, str) else API_SECRET_KEY
-        except (ImportError, AttributeError):
-            pass
+            with open(api_secret_path, 'rb') as f:
+                api_secret = f.read()
+            
+            # 验证密钥长度（至少16字节）
+            if len(api_secret) >= 16:
+                logger.info("从 Security 文件夹加载 API 密钥")
+                return api_secret
+            else:
+                logger.warning("现有 API 密钥长度不足，重新生成")
+        except Exception as e:
+            logger.warning(f"读取现有 API 密钥失败: {e}，重新生成")
+    
+    # 自动生成新密钥
+    return generate_and_save_api_secret()
 
-        raise ValueError("API secret key not found in Security folder, environment variables or config.py")
+def force_regenerate_api_secret() -> bytes:
+    """强制重新生成API密钥（忽略有效期）"""
+    logger.info("强制重新生成API密钥")
+    return generate_and_save_api_secret()
 
+def get_api_secret_info() -> dict:
+    """获取API密钥信息（用于监控和调试）"""
+    try:
+        api_secret_path = KEY_DIRECTORY / 'api_secret.key'
+        timestamp_path = get_api_secret_timestamp_path()
+        
+        info = {
+            "exists": api_secret_path.exists(),
+            "validity_days": API_SECRET_VALIDITY_DAYS,
+            "expired": is_api_secret_expired()
+        }
+        
+        if timestamp_path.exists():
+            try:
+                with open(timestamp_path, 'r') as f:
+                    timestamp_str = f.read().strip()
+                creation_time = datetime.fromisoformat(timestamp_str)
+                current_time = datetime.now()
+                time_diff = current_time - creation_time
+                
+                info.update({
+                    "created_at": timestamp_str,
+                    "age_days": time_diff.days,
+                    "age_seconds": int(time_diff.total_seconds()),
+                    "expires_in_days": max(0, API_SECRET_VALIDITY_DAYS - time_diff.days)
+                })
+            except Exception as e:
+                info["timestamp_error"] = str(e)
+        
+        return info
     except Exception as e:
-        logger.error(f"获取 API 密钥失败: {str(e)}")
-        raise
+        return {"error": str(e)}
+
+# 设置API密钥有效期（天数）
+def set_api_secret_validity_days(days: int):
+    """设置API密钥有效期（天数）"""
+    global API_SECRET_VALIDITY_DAYS
+    if days <= 0:
+        raise ValueError("有效期必须大于0天")
+    API_SECRET_VALIDITY_DAYS = days
+    logger.info(f"API密钥有效期已设置为 {days} 天")
+
+def get_api_secret_validity_days() -> int:
+    """获取当前API密钥有效期设置"""
+    return API_SECRET_VALIDITY_DAYS
 
 # 初始化API密钥
 API_SECRET_KEY = get_api_secret()
@@ -687,3 +806,165 @@ def get_client_public_key(client_id: str) -> str | None:
     else:
         logger.debug(f"未找到客户端 {client_id} 的公钥")
     return key
+
+def get_jwt_secret_timestamp_path() -> Path:
+    """获取JWT密钥时间戳文件路径"""
+    return KEY_DIRECTORY / 'jwt_secret.timestamp'
+
+def save_jwt_secret_timestamp():
+    """保存JWT密钥生成时间戳"""
+    try:
+        timestamp_path = get_jwt_secret_timestamp_path()
+        current_time = datetime.now().isoformat()
+        with open(timestamp_path, 'w') as f:
+            f.write(current_time)
+        timestamp_path.chmod(0o600)
+        logger.debug(f"保存JWT密钥时间戳: {current_time}")
+    except Exception as e:
+        logger.error(f"保存JWT时间戳失败: {str(e)}")
+
+def is_jwt_secret_expired() -> bool:
+    """检查JWT密钥是否过期"""
+    try:
+        timestamp_path = get_jwt_secret_timestamp_path()
+        if not timestamp_path.exists():
+            logger.info("JWT时间戳文件不存在，密钥需要重新生成")
+            return True
+        
+        with open(timestamp_path, 'r') as f:
+            timestamp_str = f.read().strip()
+        
+        # 解析时间戳
+        creation_time = datetime.fromisoformat(timestamp_str)
+        current_time = datetime.now()
+        
+        # 计算时间差
+        time_diff = current_time - creation_time
+        
+        # 检查是否超过有效期
+        if time_diff.days >= API_SECRET_VALIDITY_DAYS:
+            logger.info(f"JWT密钥已过期 ({time_diff.days} 天 >= {API_SECRET_VALIDITY_DAYS} 天)")
+            return True
+        else:
+            logger.debug(f"JWT密钥仍有效 ({time_diff.days} 天 < {API_SECRET_VALIDITY_DAYS} 天)")
+            return False
+            
+    except Exception as e:
+        logger.warning(f"检查JWT密钥过期状态失败: {str(e)}，将重新生成密钥")
+        return True
+
+def generate_and_save_jwt_secret() -> str:
+    """生成并保存新的 JWT 密钥"""
+    try:
+        # 生成64字节的URL安全随机密钥
+        jwt_secret = secrets.token_urlsafe(64)
+        
+        # 保存到文件
+        jwt_secret_path = KEY_DIRECTORY / 'jwt_secret.key'
+        with open(jwt_secret_path, 'w') as f:
+            f.write(jwt_secret)
+        
+        # 设置文件权限（仅所有者可读写）
+        jwt_secret_path.chmod(0o600)
+        
+        # 保存生成时间戳
+        save_jwt_secret_timestamp()
+        
+        logger.info("已生成并保存新的 JWT 密钥")
+        return jwt_secret
+    except Exception as e:
+        logger.error(f"生成 JWT 密钥失败: {str(e)}")
+        raise
+
+def get_jwt_secret() -> str:
+    """获取用于 JWT 签名的密钥（支持自动更新）"""
+    jwt_secret_path = KEY_DIRECTORY / 'jwt_secret.key'
+    
+    # 检查密钥是否过期
+    if is_jwt_secret_expired():
+        logger.info("JWT密钥已过期或不存在，正在重新生成")
+        return generate_and_save_jwt_secret()
+    
+    # 尝试从文件加载现有密钥
+    if jwt_secret_path.exists():
+        try:
+            with open(jwt_secret_path, 'r') as f:
+                jwt_secret = f.read().strip()
+            
+            # 验证密钥长度（至少32字符）
+            if len(jwt_secret) >= 32:
+                logger.info("从 Security 文件夹加载 JWT 密钥")
+                return jwt_secret
+            else:
+                logger.warning("现有 JWT 密钥长度不足，重新生成")
+        except Exception as e:
+            logger.warning(f"读取现有 JWT 密钥失败: {e}，重新生成")
+    
+    # 自动生成新密钥
+    return generate_and_save_jwt_secret()
+
+def force_regenerate_jwt_secret() -> str:
+    """强制重新生成JWT密钥（忽略有效期）"""
+    logger.info("强制重新生成JWT密钥")
+    return generate_and_save_jwt_secret()
+
+def get_jwt_secret_info() -> dict:
+    """获取JWT密钥信息（用于监控和调试）"""
+    try:
+        jwt_secret_path = KEY_DIRECTORY / 'jwt_secret.key'
+        timestamp_path = get_jwt_secret_timestamp_path()
+        
+        info = {
+            "exists": jwt_secret_path.exists(),
+            "validity_days": API_SECRET_VALIDITY_DAYS,
+            "expired": is_jwt_secret_expired()
+        }
+        
+        if timestamp_path.exists():
+            try:
+                with open(timestamp_path, 'r') as f:
+                    timestamp_str = f.read().strip()
+                creation_time = datetime.fromisoformat(timestamp_str)
+                current_time = datetime.now()
+                time_diff = current_time - creation_time
+                
+                info.update({
+                    "created_at": timestamp_str,
+                    "age_days": time_diff.days,
+                    "age_seconds": int(time_diff.total_seconds()),
+                    "expires_in_days": max(0, API_SECRET_VALIDITY_DAYS - time_diff.days)
+                })
+            except Exception as e:
+                info["timestamp_error"] = str(e)
+        
+        return info
+    except Exception as e:
+        return {"error": str(e)}
+
+def get_all_secrets_info() -> dict:
+    """获取所有密钥的信息"""
+    return {
+        "api_secret": get_api_secret_info(),
+        "jwt_secret": get_jwt_secret_info(),
+        "validity_days": API_SECRET_VALIDITY_DAYS
+    }
+
+def force_regenerate_all_secrets() -> dict:
+    """强制重新生成所有密钥"""
+    logger.info("强制重新生成所有密钥")
+    api_secret = force_regenerate_api_secret()
+    jwt_secret = force_regenerate_jwt_secret()
+    
+    return {
+        "api_secret_length": len(api_secret),
+        "jwt_secret_length": len(jwt_secret),
+        "regenerated_at": datetime.now().isoformat()
+    }
+
+# 在模块加载完成后初始化JWT密钥
+try:
+    JWT_SECRET_KEY = get_jwt_secret()
+    logger.info("JWT密钥初始化成功")
+except Exception as e:
+    logger.error(f"初始化 JWT 密钥失败: {str(e)}")
+    raise

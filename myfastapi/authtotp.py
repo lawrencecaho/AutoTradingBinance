@@ -1,4 +1,7 @@
 # myfastapi/authtotp.py
+'''
+Create a new user and secret code
+'''
 import sys
 import os
 import pyotp

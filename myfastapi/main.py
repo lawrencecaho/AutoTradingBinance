@@ -16,7 +16,7 @@ import json
 import time
 from typing import Dict, Any, Optional
 import logging
-from fastapi import FastAPI, HTTPException, Depends # Add FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Header, status, APIRouter # Add APIRouter
 from fastapi.middleware.cors import CORSMiddleware # Add CORSMiddleware
 from sqlalchemy.orm import Session # Add Session
 from database import dbselect_common, Session # Add dbselect_common and import Session from database.py
@@ -105,9 +105,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.backends import default_backend
 
 # 项目内部导入
-from myfastapi.auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, verify_token, get_current_user_from_token # MODIFIED: Added get_current_user_from_token
-from myfastapi.authtotp import verify_totp as verify_totp_code
-from myfastapi.security import (
+from auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, verify_token, get_current_user_from_token # MODIFIED: Added get_current_user_from_token
+from authtotp import verify_totp as verify_totp_code
+from security import (
     decrypt_data,
     encrypt_data,
     verify_security_headers,
@@ -121,8 +121,8 @@ from myfastapi.security import (
     encrypt_with_client_key,
     hybrid_encrypt_with_client_key
 )
-from myfastapi.chunked_encryption import chunk_encrypt_large_data
-from myfastapi.echarts import router as echarts_router # 从 .echarts 导入 router 并重命名以避免冲突
+from chunked_encryption import chunk_encrypt_large_data
+from echarts import router as echarts_router # 从 .echarts 导入 router 并重命名以避免冲突
 
 # 应用生命周期管理
 @asynccontextmanager
@@ -180,6 +180,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 创建认证路由组
+auth_router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
 # 工具函数
 def encrypt_response(response_data: Dict[str, Any], client_id: Optional[str] = None) -> EncryptedResponse:
@@ -331,7 +334,7 @@ async def security_info():
     """获取加密相关的公共信息"""
     return get_security_info()
 
-@app.post("/verify-otp")
+@auth_router.post("/verify-otp")
 async def verify_otp(
     request: SecureRequest,
     security_headers: dict = Depends(verify_security_headers)
@@ -382,13 +385,23 @@ async def verify_otp(
                 expires_delta=access_token_expires
             )
             
+            # 生成 refresh token
+            from auth import create_refresh_token, REFRESH_TOKEN_EXPIRE_DAYS
+            refresh_token_expires = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+            refresh_token = create_refresh_token(
+                data={"sub": user.uid},
+                expires_delta=refresh_token_expires
+            )
+            
             return encrypt_response({
                 "verified": True,
                 "token": access_token,
                 "user": {
                     "uid": user.uid,
                     "name": user.username if hasattr(user, 'username') else ""
-                }
+                },
+                "expiresIn": ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 转换为秒
+                "refreshToken": refresh_token
             }, client_id)
         else:
             return encrypt_response({
@@ -456,68 +469,212 @@ async def register_client_key(request: dict):
     except Exception as e:
         logger.error(f"注册客户端公钥失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-# 响应统计数据 /statistics & /health
-@app.get("/statistics")
-async def statistics(current_user: Dict[str, Any] = Depends(get_current_user_from_token)):
-    """
-    获取统计数据。
-    此端点受 JWT 保护。只有提供有效 Bearer 令牌的请求才能访问。
-    """
-    # 如果代码执行到这里，意味着 get_current_user_from_token 依赖已成功验证了 JWT。
-    # current_user 参数包含了从 JWT 中解码出的用户数据（payload）。
     
-    user_id = current_user.get("sub", "unknown") # "sub" 字段通常包含用户唯一标识符
+# 刷新访问令牌
+@auth_router.post("/refresh")
+async def refresh_token(
+    security_headers: dict = Depends(verify_security_headers),
+    authorization: str = Header(None)
+):
+    """刷新访问令牌"""
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未提供认证令牌",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 检查令牌格式
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="认证方案无效",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    try:
+        # 验证 refresh token
+        from auth import verify_refresh_token, create_access_token, create_refresh_token, REFRESH_TOKEN_EXPIRE_DAYS
+        payload = verify_refresh_token(token)
+        
+        # 获取用户ID
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload"
+            )
+        
+        # 创建新的 access token
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        new_access_token = create_access_token(
+            data={"sub": user_id},
+            expires_delta=access_token_expires
+        )
+        
+        # 创建新的 refresh token
+        refresh_token_expires = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        new_refresh_token = create_refresh_token(
+            data={"sub": user_id},
+            expires_delta=refresh_token_expires
+        )
+        
+        # 获取客户端ID用于响应加密
+        client_id = security_headers.get("api_key")
+        
+        # 统一响应格式，符合文档要求
+        return encrypt_response({
+            "access_token": new_access_token,
+            "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 转换为秒
+            "refresh_token": new_refresh_token
+        }, client_id)
+        
+    except HTTPException as e:
+        # 重新抛出 HTTPException
+        raise e
+    except Exception as e:
+        logger.error(f"刷新令牌失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="刷新令牌失败"
+        )
 
-    # 这里可以添加获取和返回统计数据的逻辑
-    # 例如: logger.info(f"用户 {user_id} 正在访问统计数据")
-    return {
-        "status": "success", 
-        "data": {
-            # 示例数据，实际应用中应填充真实统计信息
-            "page_views": 1000,
-            "active_users": 50
-        },
-        "user": user_id  # 在响应中返回用户ID，表明是哪个用户的数据
-    }
+@auth_router.get("/check-session")
+async def check_session(
+    security_headers: dict = Depends(verify_security_headers),
+    current_user: Dict[str, Any] = Depends(get_current_user_from_token)
+):
+    """检查会话状态"""
+    try:
+        # 获取客户端ID用于响应加密
+        client_id = security_headers.get("api_key")
+        
+        # 获取用户ID
+        user_id = current_user.get("sub")
+        if not user_id:
+            return encrypt_response({
+                "valid": False,
+                "message": "无效的用户令牌"
+            }, client_id)
+        
+        # 创建数据库会话查询用户信息
+        session = Session()
+        try:
+            # 验证用户是否存在
+            result = dbselect_common(session, "userbasic", "uid", user_id)
+            if not result:
+                return encrypt_response({
+                    "valid": False,
+                    "message": "用户不存在"
+                }, client_id)
+            
+            user = result[0]
+            
+            # 返回会话有效信息
+            return encrypt_response({
+                "valid": True,
+                "user": {
+                    "uid": user.uid,
+                    "name": user.username if hasattr(user, 'username') else "",
+                    "roles": ["user"]  # 默认角色，可根据需要扩展
+                }
+            }, client_id)
+            
+        finally:
+            session.close()
+            
+    except HTTPException as e:
+        # 处理JWT验证失败等情况
+        client_id = security_headers.get("api_key")
+        return encrypt_response({
+            "valid": False,
+            "message": "会话已过期或无效"
+        }, client_id)
+    except Exception as e:
+        logger.error(f"会话检查失败: {str(e)}")
+        client_id = security_headers.get("api_key")
+        return encrypt_response({
+            "valid": False,
+            "message": "服务器内部错误"
+        }, client_id)
 
-@app.get("/health")
-async def health_check(current_user: Dict[str, Any] = Depends(get_current_user_from_token)):
-    """
-    健康检查。
-    此端点同样受 JWT 保护，用于验证服务状态，同时确认用户已认证。
-    """
-    # 同样，执行到这里表示用户已通过 JWT 认证。
-    # current_user 包含了认证用户的 JWT payload。
-
-    user_id = current_user.get("sub", "unknown")
-
-    # 例如: logger.info(f"用户 {user_id} 正在执行健康检查")
-    return {
-        "status": "healthy",
-        "message": "系统运行正常且用户已认证",
-        "user": user_id
-    }
+@auth_router.post("/logout")
+async def logout(
+    security_headers: dict = Depends(verify_security_headers),
+    current_user: Dict[str, Any] = Depends(get_current_user_from_token)
+):
+    """用户登出"""
+    try:
+        # 获取客户端ID用于响应加密
+        client_id = security_headers.get("api_key")
+        
+        # 获取用户ID
+        user_id = current_user.get("sub")
+        if not user_id:
+            return encrypt_response({
+                "success": False,
+                "message": "无效的用户令牌"
+            }, client_id)
+        
+        # 记录登出日志
+        logger.info(f"用户登出: user_id={user_id}, ip={security_headers.get('x-forwarded-for', 'unknown')}")
+        
+        # 返回成功响应
+        # 注意：由于当前没有实现Token黑名单，这里主要是标记登出成功
+        # 实际的Token失效需要前端删除本地存储的Token
+        return encrypt_response({
+            "success": True,
+            "message": "已成功登出"
+        }, client_id)
+        
+    except HTTPException as e:
+        # 处理JWT验证失败等情况
+        client_id = security_headers.get("api_key")
+        return encrypt_response({
+            "success": False,
+            "message": "登出失败：会话无效"
+        }, client_id)
+    except Exception as e:
+        logger.error(f"登出失败: {str(e)}")
+        client_id = security_headers.get("api_key")
+        return encrypt_response({
+            "success": False,
+            "message": "登出失败：服务器内部错误"
+        }, client_id)
 
 app.include_router(echarts_router, prefix="/echarts") # 您可以为这些路由添加一个前缀，例如 /echarts
 
+# 注册认证路由组
+app.include_router(auth_router)
 
-# 启动服务器
+# 向后兼容路由 - 简单重定向提示
+@app.post("/verify-otp")
+async def verify_otp_legacy():
+    """向后兼容提示 - 请使用新路径"""
+    logger.warning("访问了已弃用的 /verify-otp 路径")
+    raise HTTPException(
+        status_code=301, 
+        detail="此接口已迁移到 /api/auth/verify-otp，请更新API调用路径"
+    )
+
+@app.post("/refresh-token") 
+async def refresh_token_legacy():
+    """向后兼容提示 - 请使用新路径"""
+    logger.warning("访问了已弃用的 /refresh-token 路径")
+    raise HTTPException(
+        status_code=301, 
+        detail="此接口已迁移到 /api/auth/refresh，请更新API调用路径"
+    )
+
+# 启动API模块
 if __name__ == "__main__":
     import uvicorn
-    
-    # 记录启动信息
-    logger.info("启动服务器...")
-    
-    try:
-        # 使用模块导入字符串而不是app对象
-        uvicorn.run(
-            "myfastapi.main:app",
-            host="0.0.0.0", 
-            port=8000, 
-            reload=True,
-            log_config=LOGGING_CONFIG
-        )
-    except Exception as e:
-        logger.error(f"启动服务器失败: {str(e)}")
-        raise
+    logger.info("启动 FastAPI 服务器...")
+    uvicorn.run(
+        "myfastapi.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_config=LOGGING_CONFIG
+    )
