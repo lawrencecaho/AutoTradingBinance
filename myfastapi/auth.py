@@ -9,10 +9,24 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from fastapi import Header, HTTPException, status  # Add Header
 import logging
+import uuid  # 添加uuid支持
 
 # 添加项目根目录到Python路径
 sys.path.append(str(Path(__file__).parent.parent))
 from config import DATABASE_URL
+
+# 导入Redis黑名单管理
+try:
+    from .redis_client import get_token_blacklist
+    REDIS_AVAILABLE = True
+    token_blacklist_manager = get_token_blacklist()
+    logger = logging.getLogger(__name__)
+    logger.info("Redis Token黑名单功能已启用")
+except ImportError as e:
+    REDIS_AVAILABLE = False
+    token_blacklist_manager = None
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Redis不可用，Token黑名单功能已禁用: {e}")
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -50,9 +64,13 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         else:
             expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         
+        # 添加唯一标识符用于黑名单管理
+        jti = str(uuid.uuid4())  # JWT ID
+        
         to_encode.update({
             "exp": expire,
-            "iat": now  # 令牌创建时间
+            "iat": now,  # 令牌创建时间
+            "jti": jti   # JWT ID用于黑名单
         })
         
         encoded_jwt = jwt.encode(to_encode, jwt_secret, algorithm=ALGORITHM)
@@ -75,9 +93,13 @@ def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) 
         else:
             expire = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
         
+        # 添加唯一标识符用于黑名单管理
+        jti = str(uuid.uuid4())  # JWT ID
+        
         to_encode.update({
             "exp": expire,
             "iat": now,
+            "jti": jti,  # JWT ID用于黑名单
             "type": "refresh"  # 标记为 refresh token
         })
         
@@ -93,6 +115,22 @@ def verify_token(token: str) -> Dict[str, Any]:
     try:
         jwt_secret = get_jwt_secret_key()
         payload = jwt.decode(token, jwt_secret, algorithms=[ALGORITHM])
+        
+        # 检查Token是否在黑名单中
+        if REDIS_AVAILABLE and token_blacklist_manager:
+            jti = payload.get("jti")
+            if jti:
+                if token_blacklist_manager.is_token_revoked(jti):
+                    logger.warning(f"Token {jti} 已被撤销")
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail={
+                            "message": "Token has been revoked",
+                            "error_code": "TOKEN_REVOKED",
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        },
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
         
         # 验证令牌是否过期
         exp = payload.get("exp")
@@ -189,4 +227,52 @@ async def get_current_user_from_token(authorization: str = Header(None)) -> Dict
     except HTTPException as e: # Catch HTTPException from verify_token
         logger.error(f"Token verification failed: {e.detail}") # New log
         raise e # Re-raise the exception
-    # 如果验证成功，返回用户信息
+
+def revoke_token(token: str) -> bool:
+    """撤销Token并加入黑名单"""
+    if not REDIS_AVAILABLE or not token_blacklist_manager:
+        logger.warning("Redis不可用，无法撤销Token")
+        return False
+    
+    try:
+        # 解析token获取jti和过期时间
+        jwt_secret = get_jwt_secret_key()
+        payload = jwt.decode(token, jwt_secret, algorithms=[ALGORITHM], options={"verify_exp": False})
+        
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        
+        if not jti:
+            logger.warning("Token缺少jti字段，无法撤销")
+            return False
+        
+        if not exp:
+            logger.warning("Token缺少exp字段，无法撤销")
+            return False
+        
+        # 计算剩余过期时间
+        exp_time = datetime.fromtimestamp(exp, tz=timezone.utc)
+        now = datetime.now(timezone.utc)
+        
+        if exp_time <= now:
+            logger.info("Token已过期，无需加入黑名单")
+            return True
+        
+        remaining_seconds = int((exp_time - now).total_seconds())
+        
+        # 加入黑名单
+        return token_blacklist_manager.revoke_token(jti, remaining_seconds)
+        
+    except JWTError as e:
+        logger.error(f"撤销Token失败，Token解析错误: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"撤销Token失败: {e}")
+        return False
+
+def revoke_all_user_tokens(user_id: str) -> bool:
+    """撤销用户的所有Token (注意：这需要额外的Token跟踪机制)"""
+    # 这个功能需要额外的实现，因为我们需要跟踪每个用户的所有活跃Token
+    # 暂时返回False表示未实现
+    logger.warning("撤销用户所有Token功能尚未实现")
+    return False

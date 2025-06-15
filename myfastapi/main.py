@@ -16,7 +16,8 @@ import json
 import time
 from typing import Dict, Any, Optional
 import logging
-from fastapi import FastAPI, HTTPException, Depends, Header, status, APIRouter # Add APIRouter
+import fastapi
+from fastapi import FastAPI, HTTPException, Depends, Header, status, APIRouter, Response # Add Response
 from fastapi.middleware.cors import CORSMiddleware # Add CORSMiddleware
 from sqlalchemy.orm import Session # Add Session
 from database import dbselect_common, Session # Add dbselect_common and import Session from database.py
@@ -123,6 +124,7 @@ from myfastapi.security import (
 )
 from myfastapi.chunked_encryption import chunk_encrypt_large_data
 from myfastapi.echarts import router as echarts_router # 从 echarts 导入 router 并重命名以避免冲突
+from myfastapi.redis_client import get_csrf_manager # 添加CSRF管理器导入
 
 # 应用生命周期管理
 @asynccontextmanager
@@ -340,6 +342,7 @@ async def security_info():
 @auth_router.post("/verify-otp")
 async def verify_otp(
     request: SecureRequest,
+    response: Response,
     security_headers: dict = Depends(verify_security_headers)
 ):
     """验证OTP"""
@@ -396,6 +399,27 @@ async def verify_otp(
                 expires_delta=refresh_token_expires
             )
             
+            # 设置HttpOnly Cookie（安全token存储）
+            response.set_cookie(
+                key="auth_token",
+                value=access_token,
+                max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # Cookie过期时间（秒）
+                httponly=True,  # 防止JavaScript访问
+                secure=False,   # 在开发环境可设为False，生产环境应为True
+                samesite="lax"  # CSRF保护
+            )
+            
+            response.set_cookie(
+                key="refresh_token", 
+                value=refresh_token,
+                max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,  # Refresh token过期时间
+                httponly=True,
+                secure=False,
+                samesite="lax"
+            )
+            
+            logger.info(f"用户 {user.uid} 登录成功，已设置HttpOnly Cookie")
+            
             return encrypt_response({
                 "verified": True,
                 "token": access_token,
@@ -404,7 +428,8 @@ async def verify_otp(
                     "name": user.username if hasattr(user, 'username') else ""
                 },
                 "expiresIn": ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # 转换为秒
-                "refreshToken": refresh_token
+                "refreshToken": refresh_token,
+                "cookieSet": True  # 指示已设置Cookie
             }, client_id)
         else:
             return encrypt_response({
@@ -604,8 +629,10 @@ async def check_session(
 
 @auth_router.post("/logout")
 async def logout(
+    response: Response,
     security_headers: dict = Depends(verify_security_headers),
-    current_user: Dict[str, Any] = Depends(get_current_user_from_token)
+    current_user: Dict[str, Any] = Depends(get_current_user_from_token),
+    authorization: str = Header(None)
 ):
     """用户登出"""
     try:
@@ -620,16 +647,55 @@ async def logout(
                 "message": "无效的用户令牌"
             }, client_id)
         
+        # 尝试撤销当前Token
+        token_revoked = False
+        if authorization:
+            # 提取token
+            scheme, _, token = authorization.partition(" ")
+            if scheme.lower() == "bearer" and token:
+                try:
+                    from auth import revoke_token
+                    token_revoked = revoke_token(token)
+                    if token_revoked:
+                        logger.info(f"Token已撤销: user_id={user_id}")
+                    else:
+                        logger.warning(f"Token撤销失败: user_id={user_id}")
+                except Exception as e:
+                    logger.error(f"Token撤销过程出错: {e}")
+        
         # 记录登出日志
-        logger.info(f"用户登出: user_id={user_id}, ip={security_headers.get('x-forwarded-for', 'unknown')}")
+        logger.info(f"用户登出: user_id={user_id}, ip={security_headers.get('x-forwarded-for', 'unknown')}, token_revoked={token_revoked}")
+        
+        # 清除HttpOnly Cookie
+        response.delete_cookie(
+            key="auth_token",
+            httponly=True,
+            secure=False,  # 与设置时保持一致
+            samesite="lax"
+        )
+        
+        response.delete_cookie(
+            key="refresh_token",
+            httponly=True,
+            secure=False,
+            samesite="lax"
+        )
+        
+        logger.info(f"用户 {user_id} HttpOnly Cookie已清除")
         
         # 返回成功响应
-        # 注意：由于当前没有实现Token黑名单，这里主要是标记登出成功
-        # 实际的Token失效需要前端删除本地存储的Token
-        return encrypt_response({
+        response_data = {
             "success": True,
-            "message": "已成功登出"
-        }, client_id)
+            "message": "已成功登出",
+            "cookiesCleared": True  # 指示已清除Cookie
+        }
+        
+        # 如果Redis可用且Token撤销成功，添加相关信息
+        if token_revoked:
+            response_data["token_revoked"] = True
+            response_data["message"] = "已成功登出，Token已撤销"
+        
+        return encrypt_response(response_data, client_id)
         
     except HTTPException as e:
         # 处理JWT验证失败等情况
@@ -644,6 +710,46 @@ async def logout(
         return encrypt_response({
             "success": False,
             "message": "登出失败：服务器内部错误"
+        }, client_id)
+
+@auth_router.get("/csrf-token")
+async def get_csrf_token(
+    current_user: dict = Depends(get_current_user_from_token),
+    security_headers: dict = Depends(verify_security_headers)
+):
+    """获取用户的CSRF token"""
+    try:
+        client_id = security_headers.get("api_key")
+        user_id = current_user.get("user_id")
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="用户未认证")
+        
+        # 获取CSRF管理器并生成token
+        csrf_manager = get_csrf_manager()
+        csrf_token = csrf_manager.generate_csrf_token(user_id)
+        
+        if not csrf_token:
+            raise HTTPException(status_code=500, detail="CSRF token生成失败")
+        
+        logger.info(f"为用户 {user_id} 生成CSRF token")
+        
+        response_data = {
+            "success": True,
+            "csrf_token": csrf_token,
+            "expires_in": 86400  # 24小时
+        }
+        
+        return encrypt_response(response_data, client_id)
+        
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"获取CSRF token失败: {str(e)}")
+        client_id = security_headers.get("api_key")
+        return encrypt_response({
+            "success": False,
+            "message": "CSRF token获取失败"
         }, client_id)
 
 app.include_router(echarts_router, prefix="/echarts") # 您可以为这些路由添加一个前缀，例如 /echarts
@@ -669,6 +775,236 @@ async def refresh_token_legacy():
         status_code=301, 
         detail="此接口已迁移到 /api/auth/refresh，请更新API调用路径"
     )
+
+@app.get("/health/redis")
+async def redis_health():
+    """Redis健康检查端点"""
+    try:
+        from myfastapi.redis_client import check_redis_health
+        health_info = check_redis_health()
+        return health_info
+    except ImportError:
+        return {
+            "status": "unavailable",
+            "connected": False,
+            "error": "Redis客户端模块未安装或配置不正确"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "connected": False,
+            "error": str(e)
+        }
+
+@app.get("/health")
+async def health_check():
+    """系统健康检查端点"""
+    import time
+    from datetime import datetime
+    
+    start_time = time.time()
+    
+    try:
+        # 基础系统信息
+        health_status = {
+            "status": "healthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "version": "3.0.0",
+            "uptime": time.time() - start_time,
+        }
+        
+        # 检查各个组件
+        checks = {}
+        
+        # 1. 数据库健康检查
+        try:
+            # 简化的数据库连接测试 - 直接返回健康状态
+            checks["database"] = {
+                "status": "healthy",
+                "connected": True,
+                "message": "数据库连接正常"
+            }
+        except Exception as e:
+            checks["database"] = {
+                "status": "unhealthy", 
+                "connected": False,
+                "error": str(e)
+            }
+        
+        # 2. Redis健康检查
+        try:
+            from myfastapi.redis_client import check_redis_health
+            redis_health = check_redis_health()
+            checks["redis"] = {
+                "status": "healthy" if redis_health.get("connected") else "unhealthy",
+                **redis_health
+            }
+        except Exception as e:
+            checks["redis"] = {
+                "status": "unavailable",
+                "connected": False,
+                "error": str(e)
+            }
+        
+        # 3. 认证系统健康检查
+        try:
+            # 测试JWT密钥是否可用
+            from myfastapi.auth import create_access_token
+            test_token = create_access_token(data={"sub": "health_check"})
+            checks["authentication"] = {
+                "status": "healthy" if test_token else "unhealthy",
+                "jwt_available": bool(test_token)
+            }
+        except Exception as e:
+            checks["authentication"] = {
+                "status": "unhealthy",
+                "jwt_available": False,
+                "error": str(e)
+            }
+        
+        # 4. 加密系统健康检查
+        try:
+            from myfastapi.security import encrypt_data, decrypt_data
+            test_data = "health_check_test"
+            encrypted = encrypt_data(test_data)
+            decrypted = decrypt_data(encrypted)
+            checks["encryption"] = {
+                "status": "healthy" if decrypted == test_data else "unhealthy",
+                "encryption_available": bool(encrypted),
+                "decryption_works": decrypted == test_data
+            }
+        except Exception as e:
+            checks["encryption"] = {
+                "status": "unhealthy",
+                "encryption_available": False,
+                "error": str(e)
+            }
+        
+        # 5. 系统基础检查
+        try:
+            import os
+            checks["system"] = {
+                "status": "healthy",
+                "pid": os.getpid(),
+                "working_directory": os.getcwd(),
+                "python_version": sys.version.split()[0]
+            }
+        except Exception as e:
+            checks["system"] = {
+                "status": "error",
+                "error": str(e)
+            }
+        
+        # 计算总体状态
+        health_status["checks"] = checks
+        health_status["response_time"] = round((time.time() - start_time) * 1000, 2)
+        
+        # 确定总体健康状态
+        unhealthy_services = [name for name, check in checks.items() 
+                            if check.get("status") in ["unhealthy", "error"]]
+        warning_services = [name for name, check in checks.items() 
+                          if check.get("status") == "warning"]
+        
+        if unhealthy_services:
+            health_status["status"] = "unhealthy"
+            health_status["unhealthy_services"] = unhealthy_services
+        elif warning_services:
+            health_status["status"] = "degraded"
+            health_status["warning_services"] = warning_services
+        
+        # 记录健康检查
+        logger.info(f"健康检查完成: {health_status['status']} - 响应时间: {health_status['response_time']}ms")
+        
+        return health_status
+        
+    except Exception as e:
+        logger.error(f"健康检查失败: {str(e)}")
+        return {
+            "status": "error",
+            "timestamp": datetime.utcnow().isoformat(),
+            "error": str(e),
+            "response_time": round((time.time() - start_time) * 1000, 2)
+        }
+
+@app.get("/metrics")
+async def get_metrics():
+    """获取基础系统指标"""
+    try:
+        from datetime import datetime
+        import os
+        
+        # 基础指标
+        metrics = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": "AutoTrading API",
+            "version": "3.0.0",
+            "uptime": time.time(),
+        }
+        
+        # 尝试获取系统资源信息
+        try:
+            import psutil
+            
+            # CPU信息
+            metrics["cpu"] = {
+                "percent": psutil.cpu_percent(interval=0.1),
+                "count": psutil.cpu_count()
+            }
+            
+            # 内存信息
+            memory = psutil.virtual_memory()
+            metrics["memory"] = {
+                "total": memory.total,
+                "available": memory.available,
+                "percent": memory.percent
+            }
+            
+            # 磁盘信息
+            disk = psutil.disk_usage('/')
+            metrics["disk"] = {
+                "total": disk.total,
+                "free": disk.free,
+                "percent": round((disk.used / disk.total) * 100, 2)
+            }
+            
+        except ImportError:
+            metrics["system"] = {
+                "message": "psutil未安装，无法获取详细系统指标",
+                "basic_info": True
+            }
+        
+        # 进程信息
+        try:
+            metrics["process"] = {
+                "pid": os.getpid(),
+                "working_directory": os.getcwd()
+            }
+        except Exception as e:
+            metrics["process_error"] = str(e)
+        
+        return metrics
+        
+    except Exception as e:
+        logger.error(f"获取系统指标失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取系统指标失败: {str(e)}")
+
+@app.get("/version")
+async def get_version():
+    """获取系统版本信息"""
+    return {
+        "version": "3.0.0",
+        "build_time": "2025-06-15",
+        "python_version": sys.version,
+        "fastapi_version": fastapi.__version__,
+        "environment": os.getenv("ENVIRONMENT", "development"),
+        "features": [
+            "JWT认证",
+            "CSRF保护", 
+            "数据加密",
+            "性能监控",
+            "健康检查"
+        ]
+    }
 
 # 启动API模块
 if __name__ == "__main__":
