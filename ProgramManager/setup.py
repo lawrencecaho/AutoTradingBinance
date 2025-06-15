@@ -67,7 +67,7 @@ setup(
     python_requires=">=3.8",
     entry_points={
         "console_scripts": [
-            "autotrading-manage=ProgramManager.manage:main",
+            "autotrading-manage=manage:main",
         ],
     },
     classifiers=[
