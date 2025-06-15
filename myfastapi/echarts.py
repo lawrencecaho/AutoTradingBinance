@@ -15,7 +15,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from database import engine # engine 是必需的, Session 可能不需要在此文件中直接使用
 from config import SYMBOL # Ensure SYMBOL is imported
 import logging # Ensure logging is imported
-from auth import get_current_user_from_token # MODIFIED: Import from auth
+from myfastapi.auth import get_current_user_from_token # MODIFIED: Import from myfastapi.auth
 logger = logging.getLogger(__name__)
 
 # 调整后的 Pydantic 模型

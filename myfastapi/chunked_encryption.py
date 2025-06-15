@@ -6,11 +6,18 @@
 """
 
 import os
+import sys
 import json
 import base64
 import time
 import logging
 from typing import Dict, Any, List, Optional
+from pathlib import Path
+
+# 添加项目根目录到Python路径
+current_dir = Path(__file__).parent
+project_root = current_dir.parent
+sys.path.insert(0, str(project_root))
 
 # 导入加密库
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
@@ -19,7 +26,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
 # 导入项目内部模块
-from security import hybrid_encrypt_with_client_key
+from myfastapi.security import hybrid_encrypt_with_client_key
 
 # 配置日志
 logger = logging.getLogger(__name__)

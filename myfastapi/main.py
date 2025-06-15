@@ -105,9 +105,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.backends import default_backend
 
 # 项目内部导入
-from auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, verify_token, get_current_user_from_token # MODIFIED: Added get_current_user_from_token
-from authtotp import verify_totp as verify_totp_code
-from security import (
+from myfastapi.auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, verify_token, get_current_user_from_token # MODIFIED: Added get_current_user_from_token
+from myfastapi.authtotp import verify_totp as verify_totp_code
+from myfastapi.security import (
     decrypt_data,
     encrypt_data,
     verify_security_headers,
@@ -121,8 +121,8 @@ from security import (
     encrypt_with_client_key,
     hybrid_encrypt_with_client_key
 )
-from chunked_encryption import chunk_encrypt_large_data
-from echarts import router as echarts_router # 从 .echarts 导入 router 并重命名以避免冲突
+from myfastapi.chunked_encryption import chunk_encrypt_large_data
+from myfastapi.echarts import router as echarts_router # 从 echarts 导入 router 并重命名以避免冲突
 
 # 应用生命周期管理
 @asynccontextmanager

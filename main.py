@@ -1,4 +1,5 @@
 # main.py
+# 目前不具备完整的交易逻辑和API接口功能
 
 import os
 import time
