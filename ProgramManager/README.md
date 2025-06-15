@@ -44,23 +44,34 @@ python3 manage.py
 - 自动密钥轮换
 - 密钥生成
 
-### 5. 服务器管理 (`server`)
+### 5. Redis管理 (`redis`)
+- Redis连接测试
+- Redis配置查看
+- 实时监控Redis状态
+- Token黑名单管理
+- 会话管理测试
+- CSRF Token管理
+- 性能统计和清理
+
+### 6. 服务器管理 (`server`)
 - 启动/停止 FastAPI 服务器
 - 服务器状态监控
 - 服务器重启
 
-### 6. 系统监控 (`monitor`)
-- CPU/内存/磁盘使用率
-- 进程监控
-- 实时系统状态
+### 7. 系统监控 (`monitor`)
+- 系统资源使用情况
+- 内存、CPU、磁盘监控
+- 网络状态检查
 
-### 7. 项目状态 (`status`)
-- 完整项目状态概览
-- 组件健康检查
+### 8. 项目状态 (`status`)
+- 检查所有组件状态
+- 配置验证
+- 服务健康检查
 
-### 8. 日志查看 (`logs`)
-- 系统日志查看
+### 9. 日志查看 (`logs`)
+- 查看系统日志
 - 错误日志分析
+- 实时日志监控
 
 ## 🎨 界面特性
 
@@ -197,3 +208,55 @@ Shell 界面会自动检查项目状态并提供维护建议。定期运行：
 - 所有操作都有详细的状态反馈
 
 享受使用 AutoTradingBinance 项目管理器！🚀
+
+## 🔗 Redis管理详细说明
+
+Redis管理功能提供了完整的Redis连接、监控和测试工具：
+
+### Redis管理子菜单
+```
+[AutoTrading]➤ redis
+🔗 Redis管理
+1. 查看Redis配置    - 显示当前Redis连接配置
+2. 测试Redis连接    - 验证Redis服务器连接状态
+3. 运行完整测试    - 执行所有Redis功能测试
+4. Redis统计信息   - 显示Redis性能和使用统计
+5. 实时监控Redis   - 实时监控Redis状态
+6. 清理过期数据    - 清理过期的缓存数据
+7. 返回主菜单
+```
+
+### 独立Redis管理工具
+
+除了集成到shell中，还可以直接使用Redis管理工具：
+
+```bash
+# 查看Redis配置
+python3 ProgramManager/redis_manager.py config
+
+# 运行连接测试
+python3 ProgramManager/redis_manager.py test
+
+# 查看统计信息
+python3 ProgramManager/redis_manager.py stats
+
+# 实时监控(间隔5秒，监控20次)
+python3 ProgramManager/redis_manager.py monitor --interval 5 --count 20
+
+# 运行所有测试和检查
+python3 ProgramManager/redis_manager.py all
+```
+
+### Redis功能测试包括
+1. **连接测试** - 验证Redis服务器连接
+2. **Token黑名单** - 测试JWT Token撤销功能
+3. **会话管理** - 测试用户会话存储和管理
+4. **CSRF Token** - 测试CSRF防护Token生成和验证
+
+### 环境变量配置
+在`.env`文件中配置Redis连接：
+```bash
+REDIS_URL=redis://testserver.lan:6379/0
+REDIS_PASSWORD="your_redis_password"
+REDIS_DB=0
+```

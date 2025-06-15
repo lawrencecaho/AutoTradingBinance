@@ -69,10 +69,11 @@ class ProjectManagerShell:
 {Colors.BLUE}│{Colors.RESET} {Colors.GREEN}2.{Colors.RESET} 依赖管理     {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}deps{Colors.RESET}         - 依赖安装/更新  
 {Colors.BLUE}│{Colors.RESET} {Colors.GREEN}3.{Colors.RESET} 安全管理     {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}security{Colors.RESET}     - 安全检查/权限设置
 {Colors.BLUE}│{Colors.RESET} {Colors.GREEN}4.{Colors.RESET} 密钥管理     {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}keys{Colors.RESET}         - 密钥检查/轮换
-{Colors.BLUE}│{Colors.RESET} {Colors.GREEN}5.{Colors.RESET} 服务器管理   {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}server{Colors.RESET}       - 启动/停止服务器
-{Colors.BLUE}│{Colors.RESET} {Colors.GREEN}6.{Colors.RESET} 系统监控     {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}monitor{Colors.RESET}      - 系统状态监控
-{Colors.BLUE}│{Colors.RESET} {Colors.GREEN}7.{Colors.RESET} 项目状态     {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}status{Colors.RESET}       - 查看项目状态
-{Colors.BLUE}│{Colors.RESET} {Colors.GREEN}8.{Colors.RESET} 日志查看     {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}logs{Colors.RESET}         - 查看系统日志
+{Colors.BLUE}│{Colors.RESET} {Colors.GREEN}5.{Colors.RESET} Redis管理    {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}redis{Colors.RESET}        - Redis连接/监控/测试
+{Colors.BLUE}│{Colors.RESET} {Colors.GREEN}6.{Colors.RESET} 服务器管理   {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}server{Colors.RESET}       - 启动/停止服务器
+{Colors.BLUE}│{Colors.RESET} {Colors.GREEN}7.{Colors.RESET} 系统监控     {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}monitor{Colors.RESET}      - 系统状态监控
+{Colors.BLUE}│{Colors.RESET} {Colors.GREEN}8.{Colors.RESET} 项目状态     {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}status{Colors.RESET}       - 查看项目状态
+{Colors.BLUE}│{Colors.RESET} {Colors.GREEN}9.{Colors.RESET} 日志查看     {Colors.BLUE}│{Colors.RESET} {Colors.YELLOW}logs{Colors.RESET}         - 查看系统日志
 {Colors.BLUE}└─────────────┘{Colors.RESET}
 
 {Colors.PURPLE}快捷命令:{Colors.RESET} {Colors.YELLOW}help{Colors.RESET}, {Colors.YELLOW}clear{Colors.RESET}, {Colors.YELLOW}history{Colors.RESET}, {Colors.YELLOW}exit{Colors.RESET}
@@ -110,16 +111,19 @@ class ProjectManagerShell:
         elif command in ['4', 'keys', 'key']:
             self.manage_keys()
             
-        elif command in ['5', 'server', 'srv']:
+        elif command in ['5', 'redis']:
+            self.manage_redis()
+            
+        elif command in ['6', 'server', 'srv']:
             self.manage_server()
             
-        elif command in ['6', 'monitor', 'mon']:
+        elif command in ['7', 'monitor', 'mon']:
             self.system_monitor()
             
-        elif command in ['7', 'status', 'stat']:
+        elif command in ['8', 'status', 'stat']:
             self.show_status()
             
-        elif command in ['8', 'logs', 'log']:
+        elif command in ['9', 'logs', 'log']:
             self.show_logs()
             
         else:
@@ -429,6 +433,111 @@ class ProjectManagerShell:
                 self.print_colored("❌ 服务器未运行或无法连接", Colors.RED)
             else:
                 self.print_colored(f"❌ 检查状态失败: {str(e)}", Colors.RED)
+    
+    def manage_redis(self):
+        """Redis管理"""
+        self.print_colored("\n🔗 Redis管理", Colors.BLUE, bold=True)
+        redis_menu = f"""
+{Colors.GREEN}1.{Colors.RESET} 查看Redis配置
+{Colors.GREEN}2.{Colors.RESET} 测试Redis连接
+{Colors.GREEN}3.{Colors.RESET} 运行完整测试
+{Colors.GREEN}4.{Colors.RESET} Redis统计信息
+{Colors.GREEN}5.{Colors.RESET} 实时监控Redis
+{Colors.GREEN}6.{Colors.RESET} 清理过期数据
+{Colors.GREEN}7.{Colors.RESET} 返回主菜单
+"""
+        print(redis_menu)
+        
+        choice = input(f"{Colors.YELLOW}请选择 (1-7): {Colors.RESET}")
+        if choice == '1':
+            self.redis_config()
+        elif choice == '2':
+            self.redis_test_connection()
+        elif choice == '3':
+            self.redis_full_test()
+        elif choice == '4':
+            self.redis_stats()
+        elif choice == '5':
+            self.redis_monitor()
+        elif choice == '6':
+            self.redis_cleanup()
+        elif choice == '7':
+            return
+        else:
+            self.print_colored("❌ 无效选择", Colors.RED)
+    
+    def redis_config(self):
+        """显示Redis配置"""
+        self.print_colored("\n📋 执行Redis配置查看...", Colors.CYAN)
+        self.run_redis_command('config')
+    
+    def redis_test_connection(self):
+        """测试Redis连接"""
+        self.print_colored("\n🔄 测试Redis连接...", Colors.CYAN)
+        self.run_redis_command('test')
+    
+    def redis_full_test(self):
+        """运行完整Redis测试"""
+        self.print_colored("\n🧪 运行完整Redis测试套件...", Colors.CYAN)
+        self.run_redis_command('all')
+    
+    def redis_stats(self):
+        """显示Redis统计信息"""
+        self.print_colored("\n📊 获取Redis统计信息...", Colors.CYAN)
+        self.run_redis_command('stats')
+    
+    def redis_monitor(self):
+        """Redis实时监控"""
+        self.print_colored("\n📡 启动Redis实时监控...", Colors.CYAN)
+        self.print_colored("💡 按 Ctrl+C 停止监控", Colors.YELLOW)
+        
+        interval = input(f"{Colors.YELLOW}监控间隔(秒, 默认5): {Colors.RESET}") or "5"
+        count = input(f"{Colors.YELLOW}监控次数(默认20): {Colors.RESET}") or "20"
+        
+        try:
+            redis_script = PROGRAM_MANAGER_DIR / "redis_manager.py"
+            if redis_script.exists():
+                result = subprocess.run([
+                    sys.executable, str(redis_script), 'monitor',
+                    '--interval', interval, '--count', count
+                ], cwd=PROJECT_ROOT, check=False)
+                
+                if result.returncode == 0:
+                    self.print_colored("✅ Redis监控完成", Colors.GREEN)
+                else:
+                    self.print_colored("⚠️ Redis监控异常结束", Colors.YELLOW)
+            else:
+                self.print_colored("❌ Redis管理器脚本不存在", Colors.RED)
+        except KeyboardInterrupt:
+            self.print_colored("\n⏹️  监控已停止", Colors.YELLOW)
+        except Exception as e:
+            self.print_colored(f"❌ Redis监控失败: {e}", Colors.RED)
+    
+    def redis_cleanup(self):
+        """清理Redis过期数据"""
+        self.print_colored("\n🧹 清理Redis过期数据...", Colors.CYAN)
+        self.run_redis_command('cleanup')
+    
+    def run_redis_command(self, action):
+        """运行Redis管理器命令"""
+        redis_script = PROGRAM_MANAGER_DIR / "redis_manager.py"
+        if redis_script.exists():
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(redis_script), action],
+                    cwd=PROJECT_ROOT,
+                    check=False
+                )
+                if result.returncode == 0:
+                    self.print_colored(f"✅ Redis命令 '{action}' 执行成功", Colors.GREEN)
+                else:
+                    self.print_colored(f"⚠️ Redis命令 '{action}' 执行完成，但可能有问题", Colors.YELLOW)
+            except Exception as e:
+                self.print_colored(f"❌ Redis命令执行失败: {str(e)}", Colors.RED)
+        else:
+            self.print_colored("❌ Redis管理器脚本不存在", Colors.RED)
+
+    # ...existing code...
     
     def run(self):
         """运行交互式界面"""
