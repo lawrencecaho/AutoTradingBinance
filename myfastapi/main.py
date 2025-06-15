@@ -130,14 +130,17 @@ async def lifespan(app: FastAPI):
     """处理应用程序的启动和关闭事件"""
     try:
         logger.info("正在验证配置...")
-        required_env_vars = [
-            "JWT_SECRET",
-            "API_SECRET_KEY"  # DATABASE_URL 将从 config.py 获取，不再在此处检查环境变量
-        ]
         
-        missing_vars = [var for var in required_env_vars if not os.getenv(var)]
-        if missing_vars:
-            error_msg = f"缺少必要的环境变量: {', '.join(missing_vars)}"
+        # 验证密钥管理系统
+        try:
+            from security import get_api_secret, get_jwt_secret
+            api_secret = get_api_secret()
+            jwt_secret = get_jwt_secret()
+            if not api_secret or not jwt_secret:
+                raise ValueError("密钥获取失败")
+            logger.info("✅ 密钥管理系统验证成功")
+        except Exception as e:
+            error_msg = f"密钥管理系统验证失败: {str(e)}"
             logger.error(error_msg)
             raise ValueError(error_msg)
         
