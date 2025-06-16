@@ -17,10 +17,11 @@ import time
 from typing import Dict, Any, Optional
 import logging
 import fastapi
-from fastapi import FastAPI, HTTPException, Depends, Header, status, APIRouter, Response # Add Response
+from fastapi import FastAPI, HTTPException, Depends, Header, status, APIRouter, Response, Request # Add Response and Request
 from fastapi.middleware.cors import CORSMiddleware # Add CORSMiddleware
 from sqlalchemy.orm import Session # Add Session
 from database import dbselect_common, Session # Add dbselect_common and import Session from database.py
+from security_config import get_security_config # Add security config
 
 # 配置日志
 LOGGING_CONFIG = {
@@ -400,23 +401,13 @@ async def verify_otp(
             )
             
             # 设置HttpOnly Cookie（安全token存储）
-            response.set_cookie(
-                key="auth_token",
-                value=access_token,
-                max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,  # Cookie过期时间（秒）
-                httponly=True,  # 防止JavaScript访问
-                secure=False,   # 在开发环境可设为False，生产环境应为True
-                samesite="lax"  # CSRF保护
-            )
+            security_cfg = get_security_config()
+            cookie_config = security_cfg.get_cookie_config(max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+            response.set_cookie(key="auth_token", value=access_token, **cookie_config)
             
-            response.set_cookie(
-                key="refresh_token", 
-                value=refresh_token,
-                max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,  # Refresh token过期时间
-                httponly=True,
-                secure=False,
-                samesite="lax"
-            )
+            # 设置刷新token Cookie，使用相同的安全配置
+            refresh_cookie_config = security_cfg.get_cookie_config(max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60)
+            response.set_cookie(key="refresh_token", value=refresh_token, **refresh_cookie_config)
             
             logger.info(f"用户 {user.uid} 登录成功，已设置HttpOnly Cookie")
             
@@ -711,6 +702,58 @@ async def logout(
             "success": False,
             "message": "登出失败：服务器内部错误"
         }, client_id)
+
+@app.get("/api/public/csrf-token")
+async def get_public_csrf_token(
+    request: Request,
+    x_api_key: str = Header(None, alias="X-API-Key"),
+    x_timestamp: str = Header(None, alias="X-Timestamp")
+):
+    """无需认证的CSRF token获取端点"""
+    try:
+        # 基本的安全检查
+        if not x_api_key or not x_timestamp:
+            raise HTTPException(status_code=400, detail="Missing required headers")
+        
+        # 验证时间戳
+        try:
+            timestamp = int(x_timestamp)
+            current_time = int(time.time() * 1000)
+            if abs(current_time - timestamp) > 30000:  # 30秒超时
+                raise HTTPException(status_code=401, detail="Request expired")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid timestamp format")
+        
+        # 生成临时会话ID用于CSRF token
+        client_ip = request.client.host if request.client else "unknown"
+        session_id = f"public_{x_api_key[:8]}_{client_ip}_{int(time.time())}"
+        
+        # 获取CSRF管理器并生成token
+        csrf_manager = get_csrf_manager()
+        csrf_token = csrf_manager.generate_csrf_token(session_id)
+        
+        if not csrf_token:
+            raise HTTPException(status_code=500, detail="CSRF token生成失败")
+        
+        logger.info(f"为客户端 {x_api_key[:8]}... 生成公开CSRF token")
+        
+        response_data = {
+            "success": True,
+            "csrf_token": csrf_token,
+            "expires_in": 1800,  # 30分钟，较短的过期时间
+            "session_id": session_id[:16] + "..."  # 部分session_id供调试
+        }
+        
+        return encrypt_response(response_data, x_api_key)
+        
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"生成公开CSRF token失败: {str(e)}")
+        return encrypt_response({
+            "success": False,
+            "message": "CSRF token生成失败：服务器内部错误"
+        }, x_api_key)
 
 @auth_router.get("/csrf-token")
 async def get_csrf_token(

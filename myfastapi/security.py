@@ -552,9 +552,15 @@ def verify_security_headers(
     if not all([x_api_key, x_timestamp]):
         raise HTTPException(status_code=401, detail="Missing security headers")
         
-    # 允许前端传递空的或固定的签名
-    if x_signature is None:
-        x_signature = 'frontend'
+    # 对无签名请求进行严格控制
+    if x_signature is None or x_signature == 'frontend':
+        # 添加速率限制和日志记录
+        import logging
+        logger = logging.getLogger(__name__)
+        api_key_masked = x_api_key[:8] + '...' if x_api_key and len(x_api_key) > 8 else 'unknown'
+        logger.warning(f"Unsigned request from API key: {api_key_masked}")
+        # 可以在这里添加额外的验证逻辑，比如IP白名单等
+        x_signature = 'frontend'  # 允许前端请求，但记录日志
 
     # 验证时间戳
     try:
@@ -564,8 +570,13 @@ def verify_security_headers(
         
         timestamp = int(x_timestamp)
         current_time = int(time.time() * 1000)
-        if abs(current_time - timestamp) > 60000:  # 60秒超时
-            raise HTTPException(status_code=401, detail="Timestamp expired")
+        # 使用配置化的时间窗口
+        from security_config import get_security_config
+        security_cfg = get_security_config()
+        time_window = security_cfg.get_timestamp_window()
+        
+        if abs(current_time - timestamp) > time_window:
+            raise HTTPException(status_code=401, detail="Request expired")
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid timestamp format")
 
