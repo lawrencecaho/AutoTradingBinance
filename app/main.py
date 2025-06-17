@@ -2,16 +2,23 @@
 # 目前不具备完整的交易逻辑和API接口功能
 
 import os
+import sys
 import time
 import uvicorn
+from pathlib import Path
+
+# 添加当前目录到Python路径，确保可以导入其他模块
+current_dir = Path(__file__).parent
+if str(current_dir) not in sys.path:
+    sys.path.insert(0, str(current_dir))
+
 from config import FETCH_INTERVAL_SECONDS
-from database import init_db,Session
+from database import init_db, Session
 from fetcher import fetch_price, get_kline
 from calculator import calculate_diff
 from strategy import should_trade
 from trader import execute_trade
 from sqlalchemy import Table, MetaData
-from fastapi import FastAPI
 
 def main():
     """

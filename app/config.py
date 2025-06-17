@@ -1,14 +1,18 @@
 # config.py
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv()
 
+# 项目根目录
+PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+
 # 测试用，实际使用需要从数据库获取
 BINANCE_API_KEY = 'PqG0U5YaArRtRKFPzXXS3AWnBX817uSpYnMIluDkG0RyDVVcphhtUsvLgw46MtJH'
-BINANCE_PRIVATE_KEY_PATH = 'Secret/Binance-testnet-prvke.pem'
+BINANCE_PRIVATE_KEY_PATH = PROJECT_ROOT / 'Secret' / 'Binance-testnet-prvke.pem'
 
 SYMBOL = 'ETHUSDT'
 

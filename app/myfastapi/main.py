@@ -1,13 +1,17 @@
 # myfastapi/main.py
 import sys
 import os
+from pathlib import Path
 
 # 添加项目根目录到Python路径
 # 确保这在任何依赖于此路径的导入之前运行
-_current_dir = os.path.dirname(os.path.abspath(__file__))
-_project_root = os.path.dirname(_current_dir)
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
+_current_dir = Path(__file__).parent
+_app_dir = _current_dir.parent
+_project_root = _app_dir.parent
+
+# 添加app目录到Python路径
+if str(_app_dir) not in sys.path:
+    sys.path.insert(0, str(_app_dir))
 
 from pathlib import Path
 from datetime import timedelta
@@ -21,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Depends, Header, status, APIRouter, 
 from fastapi.middleware.cors import CORSMiddleware # Add CORSMiddleware
 from sqlalchemy.orm import Session # Add Session
 from database import dbselect_common, Session # Add dbselect_common and import Session from database.py
-from security_config import get_security_config # Add security config
+from myfastapi.security_config import get_security_config # Add security config
 
 # 配置日志
 LOGGING_CONFIG = {
@@ -1052,11 +1056,35 @@ async def get_version():
 # 启动API模块
 if __name__ == "__main__":
     import uvicorn
-    logger.info("启动 FastAPI 服务器...")
-    uvicorn.run(
-        "myfastapi.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_config=LOGGING_CONFIG
-    )
+    import argparse
+    
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='AutoTradingBinance FastAPI Server')
+    parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
+    parser.add_argument('--port', type=int, default=8000, help='Port to bind to')
+    parser.add_argument('--reload', action='store_true', default=True, help='Enable auto-reload')
+    parser.add_argument('--workers', type=int, default=1, help='Number of worker processes')
+    parser.add_argument('--log-level', default='info', help='Log level')
+    
+    args = parser.parse_args()
+    
+    logger.info("🚀 启动 AutoTradingBinance FastAPI 服务器...")
+    logger.info(f"📍 服务地址: http://{args.host}:{args.port}")
+    logger.info(f"🔄 自动重载: {'启用' if args.reload else '禁用'}")
+    logger.info(f"👥 工作进程: {args.workers}")
+    
+    try:
+        uvicorn.run(
+            "myfastapi.main:app",
+            host=args.host,
+            port=args.port,
+            reload=args.reload,
+            workers=args.workers if not args.reload else 1,  # reload模式下只能用1个worker
+            log_config=LOGGING_CONFIG,
+            log_level=args.log_level
+        )
+    except KeyboardInterrupt:
+        logger.info("🛑 服务器被用户中断")
+    except Exception as e:
+        logger.error(f"❌ 服务器启动失败: {str(e)}")
+        sys.exit(1)
