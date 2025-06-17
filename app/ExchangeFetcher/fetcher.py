@@ -117,7 +117,7 @@ def get_kline(symbol, interval, dbr, session, table=None,
                 
             # 如果表为None，使用create_kline_table_if_not_exists创建表
             if table is None:
-                from database import create_kline_table_if_not_exists, engine
+                from DatabaseOperator.database import create_kline_table_if_not_exists, engine
                 table = create_kline_table_if_not_exists(engine, symbol.upper())
                 
             for raw_k in kline_data:
