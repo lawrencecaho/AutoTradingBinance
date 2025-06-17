@@ -22,7 +22,7 @@ StableUrl = 'https://api.binance.com/api/v3/'
 DATABASE_URL = "postgresql+psycopg2://postgres:hejiaye%402006@192.168.1.20:5432/trading"
 
 FETCH_INTERVAL_SECONDS = 6  # 价格获取间隔，单位为秒
-
+from DatabaseOperator.database import Session, engine
 
 def dbget_option(varb, cast_type):
     """
@@ -31,7 +31,6 @@ def dbget_option(varb, cast_type):
     支持类型转换，默认返回 str，可指定 int、float 等。
     """
     from sqlalchemy import Table, MetaData, select
-    from database import Session, engine
 
     metadata = MetaData()
     GlobalOption = Table("global_options", metadata, autoload_with=engine)
@@ -60,7 +59,6 @@ def dbinsert_option(varb, options):
     如果 varb 不存在，则插入新记录。
     """
     from sqlalchemy import Table, MetaData, insert, update, select
-    from database import Session, engine
 
     metadata = MetaData()
     GlobalOption = Table('global_options', metadata, autoload_with=engine)
@@ -91,7 +89,6 @@ def dbdelete_option(varb):
     删除 global_options 表中 varb 字段为 varb 的记录。
     """
     from sqlalchemy import Table, MetaData, delete
-    from database import Session, engine
 
     metadata = MetaData()
     GlobalOption = Table("global_options", metadata, autoload_with=engine)

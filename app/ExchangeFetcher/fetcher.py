@@ -7,8 +7,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from config import dbget_option, StableUrl, SYMBOL
-from database import Session, engine, init_db, insert_price, insert_kline
-from DataModificationModule import parse_kline
+from DatabaseOperator.database import Session, engine, init_db, insert_price, insert_kline
+from DataProcessingCalculator.DataModificationModule import parse_kline
 
 def fetch_price(Price):
     """

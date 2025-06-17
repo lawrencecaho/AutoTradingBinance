@@ -1,10 +1,11 @@
 # calculator.py
-
-from database import Session, engine
-from config import SYMBOL
 import argparse
+
+from DatabaseOperator.database import Session, engine
+from config import SYMBOL
 from sqlalchemy import Table, MetaData
 from datetime import datetime, timezone
+from DataProcessingCalculator.DataAnalyze import StartCaculateMACD, analyze_data_and_store_emas
 
 metadata = MetaData()
 Price = Table(

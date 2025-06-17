@@ -13,8 +13,8 @@ if str(current_dir) not in sys.path:
     sys.path.insert(0, str(current_dir))
 
 from config import FETCH_INTERVAL_SECONDS
-from database import init_db, Session
-from fetcher import fetch_price, get_kline
+from DatabaseOperator.database import init_db, Session
+from ExchangeFetcher.fetcher import fetch_price, get_kline
 from calculator import calculate_diff
 from strategy import should_trade
 from trader import execute_trade
@@ -43,7 +43,7 @@ def main():
     session = Session()
     test = get_kline("ETHUSDT", "1m", dbr=True, session=session, table=KLineTable, startTime=None, endTime=None, limit=100)
     print(test)
-    #session.close()
+    session.close()
 
 if __name__ == "__main__":
     port = int(os.getenv("API_PORT", "8000"))
