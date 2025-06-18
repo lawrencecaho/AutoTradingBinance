@@ -6,7 +6,7 @@ import sys
 import os
 import pyotp
 import qrcode
-from database import Session, dbinsert_common
+from app.DatabaseOperator.pg_operator import Session, dbinsert_common
 from sqlalchemy import Table, MetaData, create_engine
 from config import DATABASE_URL
 import argparse

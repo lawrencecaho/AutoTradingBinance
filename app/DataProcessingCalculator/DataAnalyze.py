@@ -1,8 +1,8 @@
-# DataAnalyze.py
+# app/DataProcessingCalculator/DataAnalyze.py
 import pandas as pd
 import logging
 from config import SYMBOL, FETCH_INTERVAL_SECONDS
-from database import (
+from app.DatabaseOperator.pg_operator import (
     Session, 
     engine,  # Assuming engine is correctly configured for PostgreSQL
     dbget_kline, # Changed from dbselect_common to dbget_kline
@@ -228,7 +228,7 @@ def analyze_data_and_store_emas():
         # logger.debug(f"查询表: {KLine_table_name} 中 symbol 为 {SYMBOL} 的数据")
         
         # 检查表是否存在，如果不存在则创建
-        from database import create_kline_table_if_not_exists
+        from app.DatabaseOperator.pg_operator import create_kline_table_if_not_exists
         create_kline_table_if_not_exists(engine, SYMBOL)
         
         # Use the new dbget_kline function, ensuring data is sorted by open_time ascending

@@ -1,108 +1,66 @@
 # config.py
+"""
+应用配置模块 - 仅包含配置变量，不包含业务逻辑
+"""
 
 import os
-from pathlib import Path
 from dotenv import load_dotenv
+from PathUniti import PROJECT_ROOT, get_secret_file
 
 # 加载环境变量
 load_dotenv()
 
-# 项目根目录
-PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+# =============================================================================
+# 基础配置
+# =============================================================================
 
-# 测试用，实际使用需要从数据库获取
-BINANCE_API_KEY = 'PqG0U5YaArRtRKFPzXXS3AWnBX817uSpYnMIluDkG0RyDVVcphhtUsvLgw46MtJH'
-BINANCE_PRIVATE_KEY_PATH = PROJECT_ROOT / 'Secret' / 'Binance-testnet-prvke.pem'
+# 默认交易对
+DEFAULT_SYMBOL = os.getenv('DEFAULT_SYMBOL', 'ETHUSDT')
 
-SYMBOL = 'ETHUSDT'
+# API配置
+BINANCE_API_BASE_URL = os.getenv('BINANCE_API_BASE_URL', 'https://api.binance.com/api/v3/')
 
-StableUrl = 'https://api.binance.com/api/v3/'
+# 测试用 API 密钥 (生产环境应从环境变量获取)
+BINANCE_API_KEY = os.getenv('BINANCE_API_KEY', 'PqG0U5YaArRtRKFPzXXS3AWnBX817uSpYnMIluDkG0RyDVVcphhtUsvLgw46MtJH')
 
-# 数据库连接配置
-DATABASE_URL = "postgresql+psycopg2://postgres:hejiaye%402006@192.168.1.20:5432/trading"
+# 私钥文件路径
+BINANCE_PRIVATE_KEY_PATH = get_secret_file('Binance-testnet-prvke.pem')
 
-FETCH_INTERVAL_SECONDS = 6  # 价格获取间隔，单位为秒
-from DatabaseOperator.database import Session, engine
+# =============================================================================
+# 数据库配置
+# =============================================================================
 
-def dbget_option(varb, cast_type):
-    """
-    查询 global_options 表中 varb 字段为 varb 的 options 字段值。
-    如果没有对应的 varb，则返回 None。
-    支持类型转换，默认返回 str，可指定 int、float 等。
-    """
-    from sqlalchemy import Table, MetaData, select
+DATABASE_URL = os.getenv(
+    'DATABASE_URL', 
+    "postgresql+psycopg2://postgres:hejiaye%402006@192.168.1.20:5432/trading"
+)
 
-    metadata = MetaData()
-    GlobalOption = Table("global_options", metadata, autoload_with=engine)
-    session = Session()
-    try:
-        stmt = select(GlobalOption.c.options).where(GlobalOption.c.varb == varb)
-        result = session.execute(stmt).scalar()
-        if result is None:
-            return None
-        try:
-            return cast_type(result)
-        except Exception:
-            print(f"[db_option] 类型转换失败: {result} -> {cast_type}")
-            return result
-    except Exception as e:
-        print(f"[db_option] 查询出错: {e}")
-        return None
-    finally:
-        session.close()
+# =============================================================================
+# 应用配置
+# =============================================================================
 
+# 价格获取间隔（秒）
+FETCH_INTERVAL_SECONDS = int(os.getenv('FETCH_INTERVAL_SECONDS', '6'))
 
-def dbinsert_option(varb, options):
-    """
-    插入或更新 global_options 表中的 varb 和 options 字段。
-    如果 varb 已存在，则更新 options 字段。
-    如果 varb 不存在，则插入新记录。
-    """
-    from sqlalchemy import Table, MetaData, insert, update, select
+# 日志级别
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 
-    metadata = MetaData()
-    GlobalOption = Table('global_options', metadata, autoload_with=engine)
-    session = Session()
-    try:
-        stmt = select(GlobalOption).where(GlobalOption.c.varb == varb)
-        result = session.execute(stmt).first()
-        if result:
-            # 更新操作
-            stmt = update(GlobalOption).where(GlobalOption.c.varb == varb).values(options=options)
-            session.execute(stmt)
-            print(f"[db_option] 更新 {varb} 的选项为 {options}")
-        else:
-            # 插入操作
-            stmt = insert(GlobalOption).values(varb=varb, options=options)
-            session.execute(stmt)
-            print(f"[db_option] 插入 {varb} 的选项为 {options}")
-        session.commit()
-    except Exception as e:
-        print(f"[db_option] 插入或更新出错: {e}")
-        session.rollback()
-    finally:
-        session.close()
+# =============================================================================
+# Redis 配置
+# =============================================================================
 
+REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', '')
+REDIS_DB = int(os.getenv('REDIS_DB', '0'))
 
-def dbdelete_option(varb):
-    """
-    删除 global_options 表中 varb 字段为 varb 的记录。
-    """
-    from sqlalchemy import Table, MetaData, delete
+# =============================================================================
+# 向后兼容 (待移除)
+# =============================================================================
 
-    metadata = MetaData()
-    GlobalOption = Table("global_options", metadata, autoload_with=engine)
-    session = Session()
-    try:
-        stmt = delete(GlobalOption).where(GlobalOption.c.varb == varb)
-        session.execute(stmt)
-        session.commit()
-        print(f"[db_option] 删除 {varb} 的选项")
-    except Exception as e:
-        print(f"[db_option] 删除出错: {e}")
-        session.rollback()
-    finally:
-        session.close()
+# 保留旧的变量名以确保现有代码不会立即崩溃
+SYMBOL = DEFAULT_SYMBOL
+StableUrl = BINANCE_API_BASE_URL
+
 
 
 

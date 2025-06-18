@@ -6,8 +6,9 @@ import select
 import sys
 import time
 from datetime import datetime, timezone
-from config import dbget_option, StableUrl, SYMBOL
-from DatabaseOperator.database import Session, engine, init_db, insert_price, insert_kline
+from config import BINANCE_API_BASE_URL, DEFAULT_SYMBOL
+from app.DatabaseOperator.pg_operator import Session, engine, init_db, insert_price, insert_kline
+from DatabaseOperator.redis_operator import 
 from DataProcessingCalculator.DataModificationModule import parse_kline
 
 def fetch_price(Price):
@@ -17,13 +18,14 @@ def fetch_price(Price):
     返回值:存储的价格值
     """
     try:
-        url = f'{StableUrl}ticker/price?symbol={SYMBOL}'
+        symbol = get_active_symbol()  # 动态获取当前交易对
+        url = f'{BINANCE_API_BASE_URL}ticker/price?symbol={symbol}'
         response = requests.get(url, timeout=10)
         response.raise_for_status()
         data = response.json()
         price = float(data['price'])
         session = Session()
-        custom_id = insert_price(session, Price, SYMBOL, price, datetime.now(timezone.utc))
+        custom_id = insert_price(session, Price, symbol, price, datetime.now(timezone.utc))
         session.close()
         print(f"[Fetcher] Stored price: {price}, id: {custom_id}")
         return price
@@ -37,9 +39,10 @@ if __name__ == '__main__':
     #init_db()
     # 只反射一次表结构
     from sqlalchemy import Table, MetaData
+    symbol = get_active_symbol()  # 动态获取当前交易对
     metadata = MetaData()
     Price = Table(
-        f"price_data_{SYMBOL.lower()}",
+        f"price_data_{symbol.lower()}",
         metadata,
         autoload_with=engine
     )
@@ -49,9 +52,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     print("Press 'q' and Enter to stop the fetcher.")
-    timeset = dbget_option("FETCH_INTERVAL_SECONDS", cast_type=int) # 获取时间间隔
-    if timeset is None:
-            timeset = 120  # 默认间隔
+    timeset = get_fetch_interval()  # 获取时间间隔
     print(f"[Fetcher] Fetching price every {timeset} seconds.")
 
     while True:
@@ -95,7 +96,7 @@ def get_kline(symbol, interval, dbr, session, table=None,
     返回：
         kline_data - 原始 K 线数据列表
     """
-    url = f'{StableUrl}klines'
+    url = f'{BINANCE_API_BASE_URL}klines'
     params = {
         "symbol": symbol.upper(),
         "interval": interval,
@@ -117,7 +118,7 @@ def get_kline(symbol, interval, dbr, session, table=None,
                 
             # 如果表为None，使用create_kline_table_if_not_exists创建表
             if table is None:
-                from DatabaseOperator.database import create_kline_table_if_not_exists, engine
+                from app.DatabaseOperator.pg_operator import create_kline_table_if_not_exists, engine
                 table = create_kline_table_if_not_exists(engine, symbol.upper())
                 
             for raw_k in kline_data:
