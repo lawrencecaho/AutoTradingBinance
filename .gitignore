@@ -20,3 +20,4 @@ app/myfastapi/fastcode.md
 test1.py
 .env.production
 requirements.txt.old
+app/logs/

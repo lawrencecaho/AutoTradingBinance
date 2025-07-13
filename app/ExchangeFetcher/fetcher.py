@@ -1,4 +1,4 @@
-# fetcher.py
+# app/ExchangeFetcher/fetcher.py
 
 import argparse
 import requests
@@ -7,18 +7,17 @@ import sys
 import time
 from datetime import datetime, timezone
 from config import BINANCE_API_BASE_URL, DEFAULT_SYMBOL
-from app.DatabaseOperator.pg_operator import Session, engine, init_db, insert_price, insert_kline
-from DatabaseOperator.redis_operator import 
+from DatabaseOperator.pg_operator import Session, engine, init_db, insert_price, insert_kline
 from DataProcessingCalculator.DataModificationModule import parse_kline
 
-def fetch_price(Price):
+def fetch_price(SYMBOL,Price):
     """
     从 Binance API 获取最新价格并存储到数据库
     参数:Price 表对象
     返回值:存储的价格值
     """
     try:
-        symbol = get_active_symbol()  # 动态获取当前交易对
+        symbol = SYMBOL  # 动态获取当前交易对
         url = f'{BINANCE_API_BASE_URL}ticker/price?symbol={symbol}'
         response = requests.get(url, timeout=10)
         response.raise_for_status()
@@ -33,48 +32,6 @@ def fetch_price(Price):
         print(f"[Fetcher] Error: {e}")
         return None
 
-#命令行调用传入参数 store 则独立运行直到用户输入 'q' 停止。（不需要传入参数 store 也可以运行，也会自动存储数据）
-if __name__ == '__main__':
-    # 初始化数据库表
-    #init_db()
-    # 只反射一次表结构
-    from sqlalchemy import Table, MetaData
-    symbol = get_active_symbol()  # 动态获取当前交易对
-    metadata = MetaData()
-    Price = Table(
-        f"price_data_{symbol.lower()}",
-        metadata,
-        autoload_with=engine
-    )
-    # 使用 argparse 模块解析命令行参数
-    parser = argparse.ArgumentParser(description='Fetch the latest price from Binance and optionally store it in the database.')
-    parser.add_argument('--store', action='store_true', help='Store the fetched price in the database')
-    args = parser.parse_args()
-
-    print("Press 'q' and Enter to stop the fetcher.")
-    timeset = get_fetch_interval()  # 获取时间间隔
-    print(f"[Fetcher] Fetching price every {timeset} seconds.")
-
-    while True:
-        # 检测用户输入是否为 'q'
-        if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
-            line = sys.stdin.readline().strip()
-            if line.lower() == 'q':
-                print("[Fetcher] Stopping fetcher.")
-                break
-
-        # 调用 fetch_price 函数获取价格
-        price = fetch_price(Price)
-        if price is not None:
-            if args.store:
-                print(f"[Fetcher] Price {price} has been stored in the database.")
-            else:
-                print(f"[Fetcher] Fetched price: {price}")
-
-        # 等待指定的时间间隔
-        
-        
-        time.sleep(float(timeset))
 
 # K Line
 # 需要(symbol, interval, dbr=False, session=None, table=None,startTime=None, endTime=None, limit=100)

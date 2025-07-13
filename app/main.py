@@ -5,6 +5,8 @@ import os
 import sys
 import time
 import uvicorn
+import asyncio
+import logging
 from pathlib import Path
 
 # 添加当前目录到Python路径，确保可以导入其他模块
@@ -12,27 +14,20 @@ current_dir = Path(__file__).parent
 if str(current_dir) not in sys.path:
     sys.path.insert(0, str(current_dir))
 
-from config import FETCH_INTERVAL_SECONDS
-from DatabaseOperator.database import init_db, Session
+from DatabaseOperator.pg_operator import init_db, Session
 from ExchangeFetcher.fetcher import fetch_price, get_kline
-from calculator import calculate_diff
-from strategy import should_trade
-from trader import execute_trade
 from sqlalchemy import Table, MetaData
 
-def main():
-    """
-    init_db()
+async def rollfetch_kline():
+    '''
+    异步获取K线数据并存储到数据库
+    相关参数需要被定义在 redis 或主数据库
+    运行时优先执行数据表离散度分析
+    '''
+    logging.info("开始异步获取据K线数,优先执行数据表离散度分析")
 
-    while True:
-        print("\n[Main] Cycle Start")
-        fetch_price()
-        calculate_diff()
-        decision = should_trade()
-        execute_trade(decision)
-        print("[Main] Cycle Complete\n")
-        time.sleep(FETCH_INTERVAL_SECONDS)
-    """
+
+def main():
     #需要(symbol, interval, dbr=False, session=None, table=None,startTime=None, endTime=None, limit=100)
     metadata = MetaData()
     KLineTable = Table(
