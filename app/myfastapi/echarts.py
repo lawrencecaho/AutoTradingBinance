@@ -6,13 +6,12 @@ import pandas as pd
 from sqlalchemy import Table, MetaData, select, inspect # inspect 用于检查表是否存在
 from datetime import datetime
 
-# 假设 database.py 和 config.py 在父目录中
-# 如果您的项目结构不同，请调整这些导入
-import sys
-import os
-# 将父目录添加到sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from database import engine # engine 是必需的, Session 可能不需要在此文件中直接使用
+# 使用PathUniti进行路径管理和模块导入
+from PathUniti import path_manager
+# 设置Python路径
+path_manager.setup_python_path()
+
+from DatabaseOperator.pg_operator import engine # 使用PathUniti新方法导入数据库连接
 from config import SYMBOL # Ensure SYMBOL is imported
 import logging # Ensure logging is imported
 from myfastapi.auth import get_current_user_from_token # MODIFIED: Import from myfastapi.auth

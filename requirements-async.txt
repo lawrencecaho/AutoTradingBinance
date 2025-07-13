@@ -1,0 +1,15 @@
+# 异步编程相关依赖
+aiohttp>=3.8.0
+aiofiles>=0.8.0
+asyncpg>=0.27.0  # PostgreSQL异步驱动
+aiodns>=3.0.0    # 异步DNS解析
+uvloop>=0.17.0   # 高性能事件循环 (仅Linux/macOS)
+
+# 测试相关
+pytest-asyncio>=0.20.0
+
+# 可选：数据库异步支持
+sqlalchemy[asyncio]>=1.4.0
+
+# 可选：Redis异步支持
+aioredis>=2.0.0

@@ -24,7 +24,7 @@ import fastapi
 from fastapi import FastAPI, HTTPException, Depends, Header, status, APIRouter, Response, Request # Add Response and Request
 from fastapi.middleware.cors import CORSMiddleware # Add CORSMiddleware
 from sqlalchemy.orm import Session # Add Session
-from DatabaseOperator.database import dbselect_common, Session # Add dbselect_common and import Session from database.py
+from DatabaseOperator.pg_operator import dbselect_common, Session # Add dbselect_common and import Session from database.py
 from myfastapi.security_config import get_security_config # Add security config
 
 # 配置日志

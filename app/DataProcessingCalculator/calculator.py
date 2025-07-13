@@ -1,7 +1,7 @@
-# calculator.py
+# app/DataProcessingCalculator/calculator.py
 import argparse
-
-from DatabaseOperator.database import Session, engine
+import logging
+from app.DatabaseOperator.pg_operator import Session, engine
 from config import SYMBOL
 from sqlalchemy import Table, MetaData
 from datetime import datetime, timezone

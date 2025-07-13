@@ -19,15 +19,17 @@ import logging
 from pathlib import Path
 import sys
 
-# 添加项目根目录到系统路径
-sys.path.append(str(Path(__file__).parent.parent))
+# 使用PathUniti进行路径管理和模块导入
+from PathUniti import path_manager, DATABASE_DIR
+# 设置Python路径
+path_manager.setup_python_path()
 
 from sqlalchemy import create_engine, Column, String, Text, TIMESTAMP, Table, MetaData
 from sqlalchemy import select, update, insert, func
 from sqlalchemy.ext.declarative import declarative_base
 
-# 初始化数据库连接
-from database import Session, engine
+# 初始化数据库连接 - 使用PathUniti新方法导入
+from DatabaseOperator.pg_operator import Session, engine
 metadata = MetaData()
 Base = declarative_base()
 SessionLocal = Session()
@@ -35,8 +37,9 @@ SessionLocal = Session()
 # 配置日志
 logger = logging.getLogger(__name__)
 
-# 更新密钥存储路径
-KEY_DIRECTORY = Path(__file__).parent / 'Security'
+# 更新密钥存储路径 - 使用PathUniti的SECRET_DIR
+from PathUniti import SECRET_DIR
+KEY_DIRECTORY = SECRET_DIR
 PRIVATE_KEY_PATH = KEY_DIRECTORY / 'fastapi-private.pem'
 PUBLIC_KEY_PATH = KEY_DIRECTORY / 'fastapi-public.pem'
 

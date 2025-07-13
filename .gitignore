@@ -21,3 +21,9 @@ test1.py
 .env.production
 requirements.txt.old
 app/logs/
+app/path_usage_example.py
+app/run_async_demo.py
+app/simple_ws_test.py
+app/test_rest_kline.py
+app/test_websocket_kline.py
+app/async_examples.py
