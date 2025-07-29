@@ -29,6 +29,7 @@ class PathManager:
         self.fastapi_dir = self.app_dir / "myfastapi"
         self.program_manager_dir = self.app_dir / "ProgramManager"
         self.exchange_bill_dir = self.app_dir / "ExchangeBill"
+        self.script_dir = self.app_dir / "Script"  # Script脚本目录
         
     def setup_python_path(self):
         """设置Python路径"""
@@ -96,6 +97,7 @@ CALCULATOR_DIR = path_manager.calculator_dir
 FASTAPI_DIR = path_manager.fastapi_dir
 PROGRAM_MANAGER_DIR = path_manager.program_manager_dir
 EXCHANGE_BILL_DIR = path_manager.exchange_bill_dir
+SCRIPT_DIR = path_manager.script_dir
 
 # 导出实用函数
 get_secret_file = path_manager.get_secret_file_path

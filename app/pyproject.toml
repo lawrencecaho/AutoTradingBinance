@@ -1,0 +1,26 @@
+[project]
+name = "app"
+version = "0.1.0"
+description = "AutoTradingService"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "cryptography>=45.0.5",
+    "dotenv>=0.9.9",
+    "fastapi>=0.116.1",
+    "pandas>=2.3.1",
+    "passlib>=1.7.4",
+    "psutil>=7.0.0",
+    "psycopg2-binary>=2.9.10",
+    "pydantic>=2.11.7",
+    "pyotp>=2.9.0",
+    "python-binance>=1.0.29",
+    "python-jose>=3.5.0",
+    "python-multipart>=0.0.20",
+    "qrcode>=8.2",
+    "redis>=6.2.0",
+    "requests>=2.32.4",
+    "sqlalchemy>=2.0.41",
+    "uvicorn>=0.35.0",
+    "websockets>=15.0.1",
+]

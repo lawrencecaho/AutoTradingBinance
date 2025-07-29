@@ -13,7 +13,6 @@ _project_root = _app_dir.parent
 if str(_app_dir) not in sys.path:
     sys.path.insert(0, str(_app_dir))
 
-from pathlib import Path
 from datetime import timedelta
 import base64
 import json
@@ -23,7 +22,6 @@ import logging
 import fastapi
 from fastapi import FastAPI, HTTPException, Depends, Header, status, APIRouter, Response, Request # Add Response and Request
 from fastapi.middleware.cors import CORSMiddleware # Add CORSMiddleware
-from sqlalchemy.orm import Session # Add Session
 from DatabaseOperator.pg_operator import dbselect_common, Session # Add dbselect_common and import Session from database.py
 from myfastapi.security_config import get_security_config # Add security config
 
@@ -140,7 +138,7 @@ async def lifespan(app: FastAPI):
         
         # 验证密钥管理系统
         try:
-            from security import get_api_secret, get_jwt_secret
+            from myfastapi.security import get_api_secret, get_jwt_secret
             api_secret = get_api_secret()
             jwt_secret = get_jwt_secret()
             if not api_secret or not jwt_secret:
@@ -397,7 +395,7 @@ async def verify_otp(
             )
             
             # 生成 refresh token
-            from auth import create_refresh_token, REFRESH_TOKEN_EXPIRE_DAYS
+            from myfastapi.auth import create_refresh_token, REFRESH_TOKEN_EXPIRE_DAYS
             refresh_token_expires = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
             refresh_token = create_refresh_token(
                 data={"sub": user.uid},
@@ -518,7 +516,7 @@ async def refresh_token(
     
     try:
         # 验证 refresh token
-        from auth import verify_refresh_token, create_access_token, create_refresh_token, REFRESH_TOKEN_EXPIRE_DAYS
+        from myfastapi.auth import verify_refresh_token, create_access_token, create_refresh_token, REFRESH_TOKEN_EXPIRE_DAYS
         payload = verify_refresh_token(token)
         
         # 获取用户ID
@@ -649,7 +647,7 @@ async def logout(
             scheme, _, token = authorization.partition(" ")
             if scheme.lower() == "bearer" and token:
                 try:
-                    from auth import revoke_token
+                    from myfastapi.auth import revoke_token
                     token_revoked = revoke_token(token)
                     if token_revoked:
                         logger.info(f"Token已撤销: user_id={user_id}")

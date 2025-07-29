@@ -27,3 +27,5 @@ app/simple_ws_test.py
 app/test_rest_kline.py
 app/test_websocket_kline.py
 app/async_examples.py
+app/test_table_display.py
+app/Script
