@@ -94,3 +94,42 @@ class RedisClient:
         except Exception as e:
             logger.error(f"获取Redis信息失败: {e}")
             return {}
+
+
+class TradingCacheManager:
+    """交易数据缓存管理器"""
+    
+    def __init__(self):
+        self.redis_client = RedisClient()
+        self.client = self.redis_client.client
+    
+    def cache_price(self, symbol: str, price: float, ttl: int = 300):
+        """缓存价格数据"""
+        try:
+            key = f"price:{symbol}"
+            data = {
+                'price': str(price),
+                'timestamp': datetime.now().isoformat()
+            }
+            self.client.setex(key, ttl, json.dumps(data))
+            logger.info(f"价格缓存成功: {symbol} = {price}")
+            return True
+        except Exception as e:
+            logger.error(f"价格缓存失败: {e}")
+            return False
+    
+    def get_cached_price(self, symbol: str) -> Optional[Dict]:
+        """获取缓存的价格数据"""
+        try:
+            key = f"price:{symbol}"
+            data = self.client.get(key)
+            if data and isinstance(data, (str, bytes)):
+                return json.loads(data)
+            return None
+        except Exception as e:
+            logger.error(f"获取缓存价格失败: {e}")
+            return None
+
+
+# 创建全局实例
+trading_cache = TradingCacheManager()

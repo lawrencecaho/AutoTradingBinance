@@ -1,26 +1,99 @@
 
-.vscode/
+# ====================
+# Python相关
+# ====================
 __pycache__/
-.vscode/settings.json
-Secret/PythonT1.sh
-Secret/
-app/test.py
-doapi/QRCodes/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ====================
+# 虚拟环境
+# ====================
 .env
-autotradingbinance.egg-info/
-app/fastapi.log
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ====================
+# IDE/编辑器
+# ====================
+.vscode/
 .idea/
-app/myfastapi/test.py
-app/myfastapi/test_database_connection.py
-app/myfastapi/test_security.py
-app/myfastapi/integration_test.py
-app/myfastapi/create_test_user.py
-app/myfastapi/Security/
-app/myfastapi/fastcode.md
-test1.py
-.env.production
-requirements.txt.old
+*.swp
+*.swo
+*~
+
+# ====================
+# 日志文件
+# ====================
+*.log
+logs/
 app/logs/
+
+# ====================
+# 环境配置文件
+# ====================
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# ====================
+# 密钥和敏感文件
+# ====================
+Secret/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# ====================
+# 测试相关
+# ====================
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+*test.py
+test_*.py
+*examples.py
+*example.py
+
+# ====================
+# 项目特定的临时/测试文件
+# ====================
+app/test.py
+app/myfastapi/test*.py
+app/myfastapi/fastcode.md
+app/myfastapi/Security/
+test1.py
 app/path_usage_example.py
 app/run_async_demo.py
 app/simple_ws_test.py
@@ -29,3 +102,16 @@ app/test_websocket_kline.py
 app/async_examples.py
 app/test_table_display.py
 app/Script
+doapi/QRCodes/
+
+# ====================
+# 其他
+# ====================
+requirements.txt.old
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+app/verify_websocket_db.py
+app/check_database_modules.py
+app/examples/websocket_kline_example.py
