@@ -115,3 +115,4 @@ Thumbs.db
 app/verify_websocket_db.py
 app/check_database_modules.py
 app/examples/websocket_kline_example.py
+
