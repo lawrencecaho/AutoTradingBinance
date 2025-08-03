@@ -6,13 +6,37 @@ import sys
 import os
 import pyotp
 import qrcode
-from app.DatabaseOperator.pg_operator import Session, dbinsert_common
+from DatabaseOperator.pg_operator import Session, dbinsert_common
 from sqlalchemy import Table, MetaData, create_engine
 from config import DATABASE_URL
 import argparse
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import logging
+import logging.config
+
+# 配置日志
+def setup_logger():
+    """设置日志配置"""
+    log_dir = Path(__file__).parent.parent / 'logs'
+    log_dir.mkdir(exist_ok=True)
+    
+    log_file = log_dir / 'authtotp.log'
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)
+        ],
+        force=True
+    )
+    return logging.getLogger(__name__)
+
+# 初始化logger
+logger = setup_logger()
 
 def generate_totp_secret():
     """生成新的 TOTP 密钥"""
@@ -69,27 +93,27 @@ def create_user(uid: str, username: str):
             # 生成二维码
             qr_filename = generate_qr_code(totp_secret, username)
             
-            print(f"用户创建成功!")
-            print(f"UID: {uid}")
-            print(f"用户名: {username}")
-            print(f"TOTP 密钥: {totp_secret}")
-            print(f"二维码已保存为: {qr_filename}")
-            print("\n请使用 Google Authenticator 或其他 TOTP 应用扫描二维码")
+            logger.info(f"用户创建成功!")
+            logger.info(f"UID: {uid}")
+            logger.info(f"用户名: {username}")
+            logger.info(f"TOTP 密钥: {totp_secret}")
+            logger.info(f"二维码已保存为: {qr_filename}")
+            logger.info("\n请使用 Google Authenticator 或其他 TOTP 应用扫描二维码")
             
             # 显示一个测试码，用于验证设置是否正确
             totp = pyotp.TOTP(totp_secret)
             current_otp = totp.now()
-            print(f"\n当前的 TOTP 码（用于测试）: {current_otp}")
+            logger.info(f"\n当前的 TOTP 码（用于测试）: {current_otp}")
             
             return True
             
         except Exception as e:
-            print(f"数据库插入错误: {str(e)}")
+            logger.error(f"数据库插入错误: {str(e)}")
             session.rollback()
             return False
             
     except Exception as e:
-        print(f"创建用户时出错: {str(e)}")
+        logger.error(f"创建用户时出错: {str(e)}")
         return False
     finally:
         session.close()
@@ -115,7 +139,7 @@ def verify_totp(uid: str, totp_code: str):
         return totp.verify(totp_code)
         
     except Exception as e:
-        print(f"TOTP验证出错: {str(e)}")
+        logger.error(f"TOTP验证出错: {str(e)}")
         return False
     finally:
         session.close()
@@ -131,19 +155,19 @@ if __name__ == "__main__":
     
     if args.action == 'create':
         if not args.username:
-            print("创建用户时需要提供用户名")
+            logger.error("创建用户时需要提供用户名")
             sys.exit(1)
         success = create_user(args.uid, args.username)
         sys.exit(0 if success else 1)
     
     elif args.action == 'verify':
         if not args.code:
-            print("验证时需要提供TOTP码")
+            logger.error("验证时需要提供TOTP码")
             sys.exit(1)
         success = verify_totp(args.uid, args.code)
         if success:
-            print("TOTP验证成功")
+            logger.info("TOTP验证成功")
             sys.exit(0)
         else:
-            print("TOTP验证失败")
+            logger.error("TOTP验证失败")
             sys.exit(1)

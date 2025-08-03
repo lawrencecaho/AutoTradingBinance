@@ -132,7 +132,7 @@ async def get_kline_websocket(symbol, interval, dbr=False, session=None, table=N
             raise ValueError("写入数据库时 session 参数不能为空")
         
         if table is None:
-            from DatabaseOperator.pg_operator import create_kline_table_if_not_exists
+            from app.DatabaseOperator.pg_operator import create_kline_table_if_not_exists
             table = create_kline_table_if_not_exists(engine, symbol.upper())
     
     print(f"[WebSocket] 连接到 {symbol} {interval} K线流...")
@@ -196,11 +196,10 @@ async def get_kline_websocket(symbol, interval, dbr=False, session=None, table=N
                             if dbr and parsed_kline['is_closed'] and session is not None:
                                 try:
                                     insert_kline(session, table, symbol.upper(), parsed_kline)
-                                    session.commit()
                                     print(f"[WebSocket] 已保存完结K线到数据库: {symbol} {interval}")
                                 except Exception as db_error:
                                     print(f"[WebSocket] 数据库写入错误: {db_error}")
-                                    session.rollback()
+                                    # 注意：不要在这里调用session.rollback()，因为session可能来自外部
                             
                             # 检查是否达到最大K线数量
                             if max_klines and kline_count >= max_klines:
@@ -259,3 +258,42 @@ def start_kline_websocket_sync(symbol, interval, dbr=False, session=None, table=
         callback=callback,
         max_klines=max_klines
     ))
+
+
+# WebSocket K线使用示例
+async def example_websocket_kline_usage():
+    """
+    WebSocket K线数据获取的示例用法
+    """
+    def kline_callback(kline_data):
+        """处理接收到的K线数据的回调函数"""
+        print(f"接收到K线数据: {kline_data['symbol']} {kline_data['interval']}")
+        print(f"  开盘价: {kline_data['open']}, 收盘价: {kline_data['close']}")
+        print(f"  成交量: {kline_data['volume']}, K线完结: {kline_data['is_closed']}")
+    
+    # 示例1: 只接收数据不入库
+    print("示例1: 获取BTC 1分钟K线数据(不入库)")
+    klines = await get_kline_websocket(
+        symbol="BTCUSDT",
+        interval="1m", 
+        max_klines=5,
+        callback=kline_callback
+    )
+    
+    # 示例2: 接收数据并入库（需要数据库连接）
+    # 注意：实际使用时需要提供有效的session和table对象
+    print("示例2: 获取ETH 1分钟K线数据并入库")
+    # session = Session()  # 需要先创建数据库会话
+    # try:
+    #     klines_with_db = await get_kline_websocket(
+    #         symbol="ETHUSDT",
+    #         interval="1m",
+    #         dbr=True,
+    #         session=session,
+    #         max_klines=3,
+    #         callback=kline_callback
+    #     )
+    # finally:
+    #     session.close()
+    
+    return klines

@@ -1,6 +1,6 @@
 # myfastapi/main.py
-import sys
 import os
+import sys
 from pathlib import Path
 
 # 添加项目根目录到Python路径
@@ -105,8 +105,7 @@ class SecureRequest(BaseModel): # MOVED & CORRECTED: Definition for SecureReques
 
 # 加密相关导入
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
 
 # 项目内部导入
 from myfastapi.auth import create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES, verify_token, get_current_user_from_token # MODIFIED: Added get_current_user_from_token
