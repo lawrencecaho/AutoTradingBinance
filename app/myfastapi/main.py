@@ -22,7 +22,8 @@ import logging
 import fastapi
 from fastapi import FastAPI, HTTPException, Depends, Header, status, APIRouter, Response, Request # Add Response and Request
 from fastapi.middleware.cors import CORSMiddleware # Add CORSMiddleware
-from DatabaseOperator.pg_operator import dbselect_common, Session # Add dbselect_common and import Session from database.py
+from DatabaseOperator import get_session # 使用模块提供的接口
+from DatabaseOperator.pg_operator import dbselect_common # 直接导入需要的函数
 from myfastapi.security_config import get_security_config # Add security config
 
 # 配置日志
@@ -126,6 +127,7 @@ from myfastapi.security import (
 )
 from myfastapi.chunked_encryption import chunk_encrypt_large_data
 from myfastapi.echarts import router as echarts_router # 从 echarts 导入 router 并重命名以避免冲突
+from myfastapi.queue import router as queue_router # 导入队列管理路由器
 from myfastapi.redis_client import get_csrf_manager # 添加CSRF管理器导入
 
 # 应用生命周期管理
@@ -151,6 +153,7 @@ async def lifespan(app: FastAPI):
         # 验证数据库连接
         try:
             # 创建一个新的数据库会话
+            Session = get_session()
             session = Session()
             try:
                 # 测试连接 - 使用engine直接连接测试
@@ -368,6 +371,7 @@ async def verify_otp(
         raise HTTPException(status_code=400, detail=str(e))
 
     # 创建一个数据库会话
+    Session = get_session()
     session = Session()
     try:
         # 验证用户
@@ -579,6 +583,7 @@ async def check_session(
             }, client_id)
         
         # 创建数据库会话查询用户信息
+        Session = get_session()
         session = Session()
         try:
             # 验证用户是否存在
@@ -797,6 +802,9 @@ async def get_csrf_token(
         }, client_id)
 
 app.include_router(echarts_router, prefix="/echarts") # 您可以为这些路由添加一个前缀，例如 /echarts
+
+# 注册队列管理路由组
+app.include_router(queue_router)
 
 # 注册认证路由组
 app.include_router(auth_router)

@@ -8,14 +8,14 @@ pg_operator.py
 import os
 from dotenv import load_dotenv
 from sqlalchemy import (
-    create_engine, Column, Integer, Float, String, DateTime, Enum, Table, MetaData, asc, desc, inspect, DECIMAL, BigInteger, Text, VARCHAR, TIMESTAMP, text, func
+    create_engine, Column, Integer, Float, String, DateTime, Enum, Table, MetaData, asc, desc, inspect, DECIMAL, BigInteger, Text, VARCHAR, TIMESTAMP, text, func, Boolean
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.dialects.postgresql import ENUM, UUID
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.event import listens_for
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from DataProcessingCalculator.DataModificationModule import KlineTable
 import logging # Ensure logging is imported at the module level
 
@@ -89,6 +89,9 @@ def init_db():
     # 初始化 Order 数据表
     InitializingOrderTable()
     
+    # 初始化 Fetcher Queue 配置表
+    InitializingFetcherQueueTable()
+    
     logging.info("[Database] All tables initialized successfully.")
 
 def InitializingOrderTable():
@@ -119,6 +122,31 @@ def InitializingOrderTable():
         timestamp = Column(BigInteger, nullable=False)  # 字段类型: LONG, 必需
     Base.metadata.create_all(engine)
     logging.info("[Database] Order table initialized successfully.")
+
+def InitializingFetcherQueueTable():
+    """
+    初始化数据获取队列配置表
+    """
+    # 创建队列配置数据表映射类
+    class FetcherQueueConfig(Base):
+        """
+        数据获取队列配置表
+        PostgreSQL 表设置
+        """
+        __tablename__ = 'fetcher_queue_configs'
+
+        id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()"))
+        queue_name = Column(VARCHAR(255), unique=True, nullable=False)  # 队列名称，唯一
+        symbol = Column(VARCHAR(50), nullable=False)  # 交易对符号，如 BTCUSDT
+        exchange = Column(VARCHAR(50), nullable=False, default='binance')  # 交易所名称，默认 binance
+        interval = Column(VARCHAR(10), nullable=False)  # K线周期，如 1m, 5m, 1h, 1d
+        is_active = Column(Boolean, nullable=False, default=False)  # 是否激活，默认不激活
+        description = Column(Text, nullable=True)  # 队列描述
+        created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+        updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    Base.metadata.create_all(engine)
+    logging.info("[Database] Fetcher queue config table initialized successfully.")
 
 def generate_custom_id(session, table):
     # 重要部分
@@ -437,32 +465,272 @@ def insert_kline(session, table, symbol, kline):
     open_time = datetime.fromtimestamp(kline['open_time'] / 1000, tz=timezone.utc)
     close_time = datetime.fromtimestamp(kline['close_time'] / 1000, tz=timezone.utc)
     
-    kline_entry = table.insert().values(
-        symbol=symbol,
-        open=float(kline['open']),
-        high=float(kline['high']),
-        low=float(kline['low']),
-        close=float(kline['close']),
-        volume=float(kline['volume']),
-        open_time=open_time,  # 使用转换后的datetime对象
-        close_time=close_time,  # 使用转换后的datetime对象
-        quote_asset_volume=float(kline['quote_asset_volume']),
-        num_trades=int(kline['num_trades']),
-        taker_buy_base_vol=float(kline['taker_buy_base_vol']),
-        taker_buy_quote_vol=float(kline['taker_buy_quote_vol']),
-        timestamp=datetime.now(timezone.utc)
-    )
+    # 准备数据
+    kline_data = {
+        'symbol': symbol,
+        'open': float(kline['open']),
+        'high': float(kline['high']),
+        'low': float(kline['low']),
+        'close': float(kline['close']),
+        'volume': float(kline['volume']),
+        'open_time': open_time,
+        'close_time': close_time,
+        'quote_asset_volume': float(kline['quote_asset_volume']),
+        'num_trades': int(kline['num_trades']),
+        'taker_buy_base_vol': float(kline['taker_buy_base_vol']),
+        'taker_buy_quote_vol': float(kline['taker_buy_quote_vol']),
+        'timestamp': datetime.now(timezone.utc)
+    }
     
     try:
-        session.execute(kline_entry)
-        session.commit()
-        return open_time  # 返回datetime对象作为主键
+        # 使用 PostgreSQL 的 ON CONFLICT DO UPDATE 语法进行 UPSERT
+        from sqlalchemy.dialects.postgresql import insert
+        
+        stmt = insert(table).values(**kline_data)
+        # 如果主键冲突，则更新除主键外的所有字段
+        update_dict = {key: stmt.excluded[key] for key in kline_data.keys() if key != 'open_time'}
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['open_time'],
+            set_=update_dict
+        )
+        
+        session.execute(stmt)
+        # 注意：不在这里commit，让上下文管理器处理
+        print(f"[Database] UPSERT K线数据成功: {symbol} {open_time}")
+        return open_time
+        
     except Exception as e:
-        session.rollback()
-        logging.error(f"插入K线数据失败: {e}", exc_info=True)
-        # 如果是主键冲突错误，可以考虑实现upsert逻辑或者忽略
-        # 此处简单返回None表示插入失败
+        logging.error(f"UPSERT K线数据失败: {e}", exc_info=True)
+        # 不在这里rollback，让上下文管理器处理
         return None
+
+class ExchangeDataFetcherQueueSettings:
+    """
+    交易所数据获取队列配置管理器
+    用于管理存储在 PostgreSQL 中的队列配置
+    """
+    
+    def __init__(self):
+        self.engine = engine
+        self.Session = Session
+    
+    def create_queue_config(self, queue_name: str, symbol: str, interval: str, 
+                          exchange: str = 'binance', description: Optional[str] = None) -> bool:
+        """
+        创建新的队列配置
+        
+        Args:
+            queue_name: 队列名称（唯一）
+            symbol: 交易对符号，如 BTCUSDT
+            interval: K线周期，如 1m, 5m, 1h, 1d
+            exchange: 交易所名称，默认 binance
+            description: 队列描述
+        
+        Returns:
+            bool: 创建成功返回 True，失败返回 False
+        """
+        session = self.Session()
+        try:
+            from sqlalchemy import Table, MetaData, insert
+            
+            metadata = MetaData()
+            queue_table = Table('fetcher_queue_configs', metadata, autoload_with=self.engine)
+            
+            stmt = insert(queue_table).values(
+                queue_name=queue_name,
+                symbol=symbol,
+                exchange=exchange,
+                interval=interval,
+                is_active=False,  # 默认创建为不激活状态
+                description=description
+            )
+            
+            session.execute(stmt)
+            session.commit()
+            logging.info(f"[QueueConfig] 创建队列配置成功: {queue_name}")
+            return True
+            
+        except Exception as e:
+            logging.error(f"[QueueConfig] 创建队列配置失败: {e}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
+    
+    def get_queue_config(self, queue_name: str) -> Optional[Dict]:
+        """
+        获取指定队列的配置
+        
+        Args:
+            queue_name: 队列名称
+        
+        Returns:
+            Optional[Dict]: 队列配置字典，不存在则返回 None
+        """
+        session = self.Session()
+        try:
+            from sqlalchemy import Table, MetaData, select
+            
+            metadata = MetaData()
+            queue_table = Table('fetcher_queue_configs', metadata, autoload_with=self.engine)
+            
+            stmt = select(queue_table).where(queue_table.c.queue_name == queue_name)
+            result = session.execute(stmt).first()
+            
+            if result:
+                return {
+                    'id': str(result.id),
+                    'queue_name': result.queue_name,
+                    'symbol': result.symbol,
+                    'exchange': result.exchange,
+                    'interval': result.interval,
+                    'is_active': result.is_active,
+                    'description': result.description,
+                    'created_at': result.created_at.isoformat() if result.created_at else None,
+                    'updated_at': result.updated_at.isoformat() if result.updated_at else None
+                }
+            return None
+            
+        except Exception as e:
+            logging.error(f"[QueueConfig] 获取队列配置失败: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def get_all_queue_configs(self, active_only: bool = True) -> List[Dict]:
+        """
+        获取所有队列配置
+        
+        Args:
+            active_only: 是否只返回激活的队列配置
+        
+        Returns:
+            List[Dict]: 队列配置列表
+        """
+        session = self.Session()
+        try:
+            from sqlalchemy import Table, MetaData, select
+            
+            metadata = MetaData()
+            queue_table = Table('fetcher_queue_configs', metadata, autoload_with=self.engine)
+            
+            stmt = select(queue_table)
+            if active_only:
+                stmt = stmt.where(queue_table.c.is_active == True)
+            
+            results = session.execute(stmt).fetchall()
+            
+            configs = []
+            for result in results:
+                configs.append({
+                    'id': str(result.id),
+                    'queue_name': result.queue_name,
+                    'symbol': result.symbol,
+                    'exchange': result.exchange,
+                    'interval': result.interval,
+                    'is_active': result.is_active,
+                    'description': result.description,
+                    'created_at': result.created_at.isoformat() if result.created_at else None,
+                    'updated_at': result.updated_at.isoformat() if result.updated_at else None
+                })
+            
+            return configs
+            
+        except Exception as e:
+            logging.error(f"[QueueConfig] 获取所有队列配置失败: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def update_queue_config(self, queue_name: str, **kwargs) -> bool:
+        """
+        更新队列配置
+        
+        Args:
+            queue_name: 队列名称
+            **kwargs: 要更新的字段
+        
+        Returns:
+            bool: 更新成功返回 True，失败返回 False
+        """
+        session = self.Session()
+        try:
+            from sqlalchemy import Table, MetaData, update
+            
+            metadata = MetaData()
+            queue_table = Table('fetcher_queue_configs', metadata, autoload_with=self.engine)
+            
+            # 过滤掉不允许更新的字段
+            allowed_fields = ['symbol', 'exchange', 'interval', 'is_active', 'description']
+            update_data = {k: v for k, v in kwargs.items() if k in allowed_fields}
+            
+            if not update_data:
+                logging.warning(f"[QueueConfig] 没有有效的更新字段")
+                return False
+            
+            stmt = update(queue_table).where(queue_table.c.queue_name == queue_name).values(**update_data)
+            result = session.execute(stmt)
+            session.commit()
+            
+            if result.rowcount > 0:
+                logging.info(f"[QueueConfig] 更新队列配置成功: {queue_name}")
+                return True
+            else:
+                logging.warning(f"[QueueConfig] 队列配置不存在: {queue_name}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"[QueueConfig] 更新队列配置失败: {e}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
+    
+    def delete_queue_config(self, queue_name: str) -> bool:
+        """
+        删除队列配置
+        
+        Args:
+            queue_name: 队列名称
+        
+        Returns:
+            bool: 删除成功返回 True，失败返回 False
+        """
+        session = self.Session()
+        try:
+            from sqlalchemy import Table, MetaData, delete
+            
+            metadata = MetaData()
+            queue_table = Table('fetcher_queue_configs', metadata, autoload_with=self.engine)
+            
+            stmt = delete(queue_table).where(queue_table.c.queue_name == queue_name)
+            result = session.execute(stmt)
+            session.commit()
+            
+            if result.rowcount > 0:
+                logging.info(f"[QueueConfig] 删除队列配置成功: {queue_name}")
+                return True
+            else:
+                logging.warning(f"[QueueConfig] 队列配置不存在: {queue_name}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"[QueueConfig] 删除队列配置失败: {e}")
+            session.rollback()
+            return False
+        finally:
+            session.close()
+    
+    def activate_queue(self, queue_name: str) -> bool:
+        """激活队列"""
+        return self.update_queue_config(queue_name, is_active=True)
+    
+    def deactivate_queue(self, queue_name: str) -> bool:
+        """停用队列"""
+        return self.update_queue_config(queue_name, is_active=False)
+
+# 创建全局实例
+fetcher_queue_manager = ExchangeDataFetcherQueueSettings()
 
 # 存储订单信息
 def insert_order(session, table, symbol, side, price, quantity):

@@ -13,10 +13,13 @@ from config import BINANCE_API_BASE_URL, DEFAULT_SYMBOL
 from DatabaseOperator.pg_operator import Session, engine, init_db, insert_price, insert_kline
 from DataProcessingCalculator.DataModificationModule import parse_kline
 
-def fetch_price(SYMBOL,Price):
+def fetch_price(SYMBOL, Price, session=None):
     """
     从 Binance API 获取最新价格并存储到数据库
-    参数:Price 表对象
+    参数:
+        SYMBOL - 交易对符号
+        Price - 表对象
+        session - 数据库会话（可选，如果为None则不存储到数据库）
     返回值:存储的价格值
     """
     try:
@@ -26,10 +29,14 @@ def fetch_price(SYMBOL,Price):
         response.raise_for_status()
         data = response.json()
         price = float(data['price'])
-        session = Session()
-        custom_id = insert_price(session, Price, symbol, price, datetime.now(timezone.utc))
-        session.close()
-        print(f"[Fetcher] Stored price: {price}, id: {custom_id}")
+        
+        # 只有提供session时才存储到数据库
+        if session is not None and Price is not None:
+            custom_id = insert_price(session, Price, symbol, price, datetime.now(timezone.utc))
+            print(f"[Fetcher] Stored price: {price}, id: {custom_id}")
+        else:
+            print(f"[Fetcher] Price fetched: {price} (not stored)")
+            
         return price
     except Exception as e:
         print(f"[Fetcher] Error: {e}")
@@ -78,7 +85,7 @@ def get_kline(symbol, interval, dbr, session, table=None,
                 
             # 如果表为None，使用create_kline_table_if_not_exists创建表
             if table is None:
-                from app.DatabaseOperator.pg_operator import create_kline_table_if_not_exists, engine
+                from DatabaseOperator.pg_operator import create_kline_table_if_not_exists
                 table = create_kline_table_if_not_exists(engine, symbol.upper())
                 
             for raw_k in kline_data:
@@ -132,7 +139,7 @@ async def get_kline_websocket(symbol, interval, dbr=False, session=None, table=N
             raise ValueError("写入数据库时 session 参数不能为空")
         
         if table is None:
-            from app.DatabaseOperator.pg_operator import create_kline_table_if_not_exists
+            from DatabaseOperator.pg_operator import create_kline_table_if_not_exists
             table = create_kline_table_if_not_exists(engine, symbol.upper())
     
     print(f"[WebSocket] 连接到 {symbol} {interval} K线流...")
@@ -192,11 +199,14 @@ async def get_kline_websocket(symbol, interval, dbr=False, session=None, table=N
                             if callback:
                                 callback(parsed_kline)
                             
-                            # 数据库写入（仅当K线完结时，保持与REST版本一致的行为）
-                            if dbr and parsed_kline['is_closed'] and session is not None:
+                            # 数据库写入（为了测试，暂时允许未完结的K线也入库）
+                            if dbr and session is not None:
                                 try:
                                     insert_kline(session, table, symbol.upper(), parsed_kline)
-                                    print(f"[WebSocket] 已保存完结K线到数据库: {symbol} {interval}")
+                                    if parsed_kline['is_closed']:
+                                        print(f"[WebSocket] 已保存完结K线到数据库: {symbol} {interval}")
+                                    else:
+                                        print(f"[WebSocket] 已保存实时K线到数据库: {symbol} {interval} (未完结)")
                                 except Exception as db_error:
                                     print(f"[WebSocket] 数据库写入错误: {db_error}")
                                     # 注意：不要在这里调用session.rollback()，因为session可能来自外部
@@ -277,23 +287,24 @@ async def example_websocket_kline_usage():
         symbol="BTCUSDT",
         interval="1m", 
         max_klines=5,
+        dbr=False,  # 不入库
         callback=kline_callback
     )
     
-    # 示例2: 接收数据并入库（需要数据库连接）
-    # 注意：实际使用时需要提供有效的session和table对象
+    # 示例2: 接收数据并入库（推荐的会话管理方式）
     print("示例2: 获取ETH 1分钟K线数据并入库")
-    # session = Session()  # 需要先创建数据库会话
-    # try:
-    #     klines_with_db = await get_kline_websocket(
-    #         symbol="ETHUSDT",
-    #         interval="1m",
-    #         dbr=True,
-    #         session=session,
-    #         max_klines=3,
-    #         callback=kline_callback
-    #     )
-    # finally:
-    #     session.close()
+    from DatabaseOperator import get_db_session
+    try:
+        with get_db_session() as session:
+            klines_with_db = await get_kline_websocket(
+                symbol="ETHUSDT",
+                interval="1m",
+                dbr=True,
+                session=session,
+                max_klines=3,
+                callback=kline_callback
+            )
+    except Exception as e:
+        print(f"数据库操作错误: {e}")
     
     return klines
