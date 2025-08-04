@@ -4,6 +4,7 @@
 PostergreSQL 操作
 Redis 操作
 """
+from contextlib import contextmanager
 
 # 延迟导入，避免在包级别导入时出现依赖错误
 def init_db(*args, **kwargs):
@@ -18,6 +19,23 @@ def get_session():
 def get_pg_operator():
     from . import pg_operator
     return pg_operator
+
+@contextmanager
+def get_db_session():
+    """
+    数据库会话上下文管理器
+    自动处理会话的创建、提交和关闭
+    """
+    from .pg_operator import Session
+    session = Session()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 def get_redis_operator():
     from . import redis_operator  

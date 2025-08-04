@@ -6,7 +6,8 @@ import sys
 import os
 import pyotp
 import qrcode
-from DatabaseOperator.pg_operator import Session, dbinsert_common
+from DatabaseOperator import get_session # 使用模块提供的接口
+from DatabaseOperator.pg_operator import dbinsert_common # 直接导入需要的函数
 from sqlalchemy import Table, MetaData, create_engine
 from config import DATABASE_URL
 import argparse
@@ -69,6 +70,7 @@ def generate_qr_code(totp_secret: str, username: str):
 
 def create_user(uid: str, username: str):
     """创建新用户并生成 TOTP 密钥"""
+    Session = get_session()
     session = Session()
     try:
         # 生成 TOTP 密钥
@@ -120,6 +122,7 @@ def create_user(uid: str, username: str):
 
 def verify_totp(uid: str, totp_code: str):
     """验证 TOTP 码"""
+    Session = get_session()
     session = Session()
     try:
         # 获取用户的TOTP密钥

@@ -28,10 +28,13 @@ from sqlalchemy import create_engine, Column, String, Text, TIMESTAMP, Table, Me
 from sqlalchemy import select, update, insert, func
 from sqlalchemy.ext.declarative import declarative_base
 
-# 初始化数据库连接 - 使用PathUniti新方法导入
-from DatabaseOperator.pg_operator import Session, engine
+# 初始化数据库连接 - 使用 DatabaseOperator 模块接口
+from DatabaseOperator import get_session # 使用模块提供的接口
+from DatabaseOperator.pg_operator import engine # 直接导入需要的对象
 metadata = MetaData()
 Base = declarative_base()
+# 使用函数获取 Session 类
+Session = get_session()
 SessionLocal = Session()
 
 # 配置日志

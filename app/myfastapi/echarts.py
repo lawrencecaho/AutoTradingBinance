@@ -11,7 +11,7 @@ from PathUniti import path_manager
 # 设置Python路径
 path_manager.setup_python_path()
 
-from DatabaseOperator.pg_operator import engine # 使用PathUniti新方法导入数据库连接
+from DatabaseOperator.pg_operator import engine # 使用 DatabaseOperator 模块导入数据库连接
 from config import SYMBOL # Ensure SYMBOL is imported
 import logging # Ensure logging is imported
 from myfastapi.auth import get_current_user_from_token # MODIFIED: Import from myfastapi.auth
