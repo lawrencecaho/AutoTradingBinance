@@ -142,6 +142,8 @@ def InitializingFetcherQueueTable():
         interval = Column(VARCHAR(10), nullable=False)  # K线周期，如 1m, 5m, 1h, 1d
         is_active = Column(Boolean, nullable=False, default=False)  # 是否激活，默认不激活
         description = Column(Text, nullable=True)  # 队列描述
+        created_by = Column(VARCHAR(255), nullable=False)  # 创建者用户ID/用户名
+        updated_by = Column(VARCHAR(255), nullable=True)  # 最后更新者用户ID/用户名
         created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
         updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -515,7 +517,8 @@ class ExchangeDataFetcherQueueSettings:
         self.Session = Session
     
     def create_queue_config(self, queue_name: str, symbol: str, interval: str, 
-                          exchange: str = 'binance', description: Optional[str] = None) -> bool:
+                          exchange: str = 'binance', description: Optional[str] = None, 
+                          created_by: str = 'system') -> bool:
         """
         创建新的队列配置
         
@@ -525,6 +528,7 @@ class ExchangeDataFetcherQueueSettings:
             interval: K线周期，如 1m, 5m, 1h, 1d
             exchange: 交易所名称，默认 binance
             description: 队列描述
+            created_by: 创建者用户ID/用户名，默认 'system'
         
         Returns:
             bool: 创建成功返回 True，失败返回 False
@@ -542,7 +546,8 @@ class ExchangeDataFetcherQueueSettings:
                 exchange=exchange,
                 interval=interval,
                 is_active=False,  # 默认创建为不激活状态
-                description=description
+                description=description,
+                created_by=created_by
             )
             
             session.execute(stmt)
@@ -586,6 +591,8 @@ class ExchangeDataFetcherQueueSettings:
                     'interval': result.interval,
                     'is_active': result.is_active,
                     'description': result.description,
+                    'created_by': result.created_by,
+                    'updated_by': result.updated_by,
                     'created_at': result.created_at.isoformat() if result.created_at else None,
                     'updated_at': result.updated_at.isoformat() if result.updated_at else None
                 }
@@ -630,6 +637,8 @@ class ExchangeDataFetcherQueueSettings:
                     'interval': result.interval,
                     'is_active': result.is_active,
                     'description': result.description,
+                    'created_by': result.created_by,
+                    'updated_by': result.updated_by,
                     'created_at': result.created_at.isoformat() if result.created_at else None,
                     'updated_at': result.updated_at.isoformat() if result.updated_at else None
                 })
@@ -642,12 +651,13 @@ class ExchangeDataFetcherQueueSettings:
         finally:
             session.close()
     
-    def update_queue_config(self, queue_name: str, **kwargs) -> bool:
+    def update_queue_config(self, queue_name: str, updated_by: str = 'system', **kwargs) -> bool:
         """
         更新队列配置
         
         Args:
             queue_name: 队列名称
+            updated_by: 更新者用户ID/用户名，默认 'system'
             **kwargs: 要更新的字段
         
         Returns:
@@ -664,7 +674,10 @@ class ExchangeDataFetcherQueueSettings:
             allowed_fields = ['symbol', 'exchange', 'interval', 'is_active', 'description']
             update_data = {k: v for k, v in kwargs.items() if k in allowed_fields}
             
-            if not update_data:
+            # 添加更新者信息
+            update_data['updated_by'] = updated_by
+            
+            if len(update_data) <= 1:  # 只有 updated_by 字段
                 logging.warning(f"[QueueConfig] 没有有效的更新字段")
                 return False
             
@@ -721,13 +734,13 @@ class ExchangeDataFetcherQueueSettings:
         finally:
             session.close()
     
-    def activate_queue(self, queue_name: str) -> bool:
+    def activate_queue(self, queue_name: str, updated_by: str = 'system') -> bool:
         """激活队列"""
-        return self.update_queue_config(queue_name, is_active=True)
+        return self.update_queue_config(queue_name, updated_by=updated_by, is_active=True)
     
-    def deactivate_queue(self, queue_name: str) -> bool:
+    def deactivate_queue(self, queue_name: str, updated_by: str = 'system') -> bool:
         """停用队列"""
-        return self.update_queue_config(queue_name, is_active=False)
+        return self.update_queue_config(queue_name, updated_by=updated_by, is_active=False)
 
 # 创建全局实例
 fetcher_queue_manager = ExchangeDataFetcherQueueSettings()

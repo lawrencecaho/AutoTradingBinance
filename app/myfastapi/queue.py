@@ -51,6 +51,7 @@ class QueueConfigCreate(BaseModel):
     interval: str = Field(..., description="K线周期", min_length=1, max_length=10)
     exchange: str = Field(default="binance", description="交易所名称", max_length=50)
     description: Optional[str] = Field(None, description="队列描述", max_length=500)
+    # 注意：created_by 字段不在此模型中，由API自动获取
 
 class QueueConfigUpdate(BaseModel):
     queue_name: Optional[str] = Field(None, description="队列名称", min_length=1, max_length=255)
@@ -108,7 +109,7 @@ async def decrypt_request_data(request: SecureRequest) -> Dict[str, Any]:
 
 # API 端点
 
-@router.get("/list", summary="获取所有队列配置")
+@router.get("/edfqs/list", summary="获取所有队列配置")
 async def get_all_queues(
     active_only: bool = True,
     security_headers: dict = Depends(verify_security_headers)
@@ -157,7 +158,7 @@ async def get_all_queues(
             status_code=500
         )
 
-@router.get("/{queue_name}", summary="获取特定队列配置")
+@router.get("/edfqs/{queue_name}", summary="获取特定队列配置")
 async def get_queue_config(
     queue_name: str,
     security_headers: dict = Depends(verify_security_headers)
@@ -217,7 +218,7 @@ async def get_queue_config(
             status_code=500
         )
 
-@router.post("/create", summary="创建新队列配置")
+@router.post("/edfqs/create", summary="创建新队列配置")
 async def create_queue_config(
     request: SecureRequest,
     security_headers: dict = Depends(verify_security_headers)
@@ -265,13 +266,17 @@ async def create_queue_config(
                 status_code=400
             )
         
+        # 从安全头部获取创建者信息
+        created_by = security_headers.get("api_key", "unknown_user")
+        
         # 创建队列配置
         result = fetcher_queue_manager.create_queue_config(
             queue_name=queue_config.queue_name,
             symbol=queue_config.symbol,
             interval=queue_config.interval,
             exchange=queue_config.exchange,
-            description=queue_config.description
+            description=queue_config.description,
+            created_by=created_by
         )
         
         if result:
@@ -316,7 +321,7 @@ async def create_queue_config(
             status_code=500
         )
 
-@router.put("/{queue_name}", summary="更新队列配置")
+@router.put("/edfqs/{queue_name}", summary="更新队列配置")
 async def update_queue_config(
     queue_name: str,
     request: SecureRequest,
@@ -403,8 +408,11 @@ async def update_queue_config(
                     status_code=400
                 )
         
+        # 从安全头部获取更新者信息
+        updated_by = security_headers.get("api_key", "unknown_user")
+        
         # 执行更新
-        result = fetcher_queue_manager.update_queue_config(queue_name, **update_data)
+        result = fetcher_queue_manager.update_queue_config(queue_name, updated_by=updated_by, **update_data)
         
         if result:
             # 获取更新后的配置
@@ -448,7 +456,7 @@ async def update_queue_config(
             status_code=500
         )
 
-@router.post("/{queue_name}/activate", summary="激活队列")
+@router.post("/edfqs/{queue_name}/activate", summary="激活队列")
 async def activate_queue(
     queue_name: str,
     security_headers: dict = Depends(verify_security_headers)
@@ -473,8 +481,11 @@ async def activate_queue(
                 status_code=404
             )
         
+        # 从安全头部获取操作者信息
+        updated_by = security_headers.get("api_key", "unknown_user")
+        
         # 激活队列
-        result = fetcher_queue_manager.activate_queue(queue_name)
+        result = fetcher_queue_manager.activate_queue(queue_name, updated_by=updated_by)
         
         if result:
             updated_config = fetcher_queue_manager.get_queue_config(queue_name)
@@ -512,7 +523,7 @@ async def activate_queue(
             status_code=500
         )
 
-@router.post("/{queue_name}/deactivate", summary="停用队列")
+@router.post("/edfqs/{queue_name}/deactivate", summary="停用队列")
 async def deactivate_queue(
     queue_name: str,
     security_headers: dict = Depends(verify_security_headers)
@@ -537,8 +548,11 @@ async def deactivate_queue(
                 status_code=404
             )
         
+        # 从安全头部获取操作者信息
+        updated_by = security_headers.get("api_key", "unknown_user")
+        
         # 停用队列
-        result = fetcher_queue_manager.deactivate_queue(queue_name)
+        result = fetcher_queue_manager.deactivate_queue(queue_name, updated_by=updated_by)
         
         if result:
             updated_config = fetcher_queue_manager.get_queue_config(queue_name)
@@ -576,7 +590,7 @@ async def deactivate_queue(
             status_code=500
         )
 
-@router.delete("/{queue_name}", summary="删除队列配置")
+@router.delete("/edfqs/{queue_name}/delete", summary="删除队列配置")
 async def delete_queue_config(
     queue_name: str,
     security_headers: dict = Depends(verify_security_headers)
