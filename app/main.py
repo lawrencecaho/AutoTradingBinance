@@ -14,9 +14,18 @@ current_dir = Path(__file__).parent
 if str(current_dir) not in sys.path:
     sys.path.insert(0, str(current_dir))
 
-from DatabaseOperator import init_db, Session
+from DatabaseOperator import *
 from ExchangeFetcher import fetch_price, get_kline
 from sqlalchemy import Table, MetaData
+
+async def QueueSetting():
+    '''
+    异步设置队列
+    需要定义队列的名称和相关参数
+    '''
+    logging.info("开始异步设置队列")
+    command = {1,2,2}
+    return command
 
 async def kline_rollfetch():
     '''
@@ -38,6 +47,16 @@ async def main():
     Production environment Entry Point
     '''
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    logging.info("启动主程序")
+
+    for Queue in await QueueSetting():
+        logging.info(f"启动队列: {Queue}")
+
+        # Start the kline fetcher
+        await kline_rollfetch()
+
+        # Start the fortune point founder
+        await FortunepointFounder()
 
 
 if __name__ == "__main__":

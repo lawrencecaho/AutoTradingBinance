@@ -669,3 +669,5 @@ async def delete_queue_config(
             media_type="application/json",
             status_code=500
         )
+
+# 订单队列接口

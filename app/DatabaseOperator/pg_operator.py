@@ -94,34 +94,78 @@ def init_db():
     
     logging.info("[Database] All tables initialized successfully.")
 
+# 初始化 Binance 订单表 / Initialize Binance Order Table
 def InitializingOrderTable():
     """
-    初始化 Order 数据表
+    初始化 Binance 订单表
+    根据 Binance Spot WebSocket API order.place 参数规范创建
     """
     # 创建 PostgreSQL 数据表映射类
-    class Order(Base):
-        __tablename__ = 'orders'
+    class BinanceOrder(Base):
+        __tablename__ = 'BinanceOrders'
 
-        symbol = Column(String, nullable=False)  # 字段类型: STRING, 必需
-        side = Column(Enum('BUY', 'SELL', name='order_side_enum'), nullable=False)  # 字段类型: ENUM, 必需
+        # 主键字段
+        id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("uuid_generate_v4()"))
+        
+        # 必填字段 - Binance API 要求
+        symbol = Column(VARCHAR(20), nullable=False, index=True, comment='交易对，如 BTCUSDT')
+        side = Column(Enum('BUY', 'SELL', name='order_side_enum'), nullable=False, comment='买卖方向')
         type = Column(Enum('LIMIT', 'MARKET', 'STOP_LOSS', 'STOP_LOSS_LIMIT', 'TAKE_PROFIT', 
-                           'TAKE_PROFIT_LIMIT', name='order_type_enum'), nullable=False)  # 字段类型: ENUM, 必需
-        timeInForce = Column(Enum('GTC', 'IOC', 'FOK', name='time_in_force_enum'), nullable=True)  # 字段类型: ENUM, 非必需
-        quantity = Column(DECIMAL, nullable=True)  # 字段类型: DECIMAL, 非必需
-        quoteOrderQty = Column(DECIMAL, nullable=True)  # 字段类型: DECIMAL, 非必需
-        price = Column(DECIMAL, nullable=True)  # 字段类型: DECIMAL, 非必需
-        newClientOrderId = Column(String, nullable=True)  # 字段类型: STRING, 非必需
-        strategyId = Column(BigInteger, nullable=True)  # 字段类型: LONG, 非必需
-        strategyType = Column(Integer, nullable=True)  # 字段类型: INT, 非必需
-        stopPrice = Column(DECIMAL, nullable=True)  # 字段类型: DECIMAL, 非必需
-        trailingDelta = Column(BigInteger, nullable=True)  # 字段类型: LONG, 非必需
-        icebergQty = Column(DECIMAL, nullable=True)  # 字段类型: DECIMAL, 非必需
-        newOrderRespType = Column(Enum('ACK', 'RESULT', 'FULL', name='order_resp_type_enum'), nullable=True)  # 字段类型: ENUM, 非必需
-        selfTradePreventionMode = Column(Enum('STP', name='self_trade_prevention_enum'), nullable=True)  # 字段类型: ENUM, 非必需
-        recvWindow = Column(BigInteger, nullable=True)  # 字段类型: LONG, 非必需
-        timestamp = Column(BigInteger, nullable=False)  # 字段类型: LONG, 必需
+                           'TAKE_PROFIT_LIMIT', 'LIMIT_MAKER', name='order_type_enum'), 
+                     nullable=False, comment='订单类型')
+        
+        # 条件必填字段 - 根据订单类型决定是否必需
+        timeInForce = Column(Enum('GTC', 'IOC', 'FOK', name='time_in_force_enum'), 
+                            nullable=True, comment='有效期策略（LIMIT相关订单必需）')
+        quantity = Column(DECIMAL(20, 8), nullable=True, comment='基础资产数量')
+        quoteOrderQty = Column(DECIMAL(20, 8), nullable=True, comment='按计价资产金额下单（仅MARKET订单）')
+        price = Column(DECIMAL(20, 8), nullable=True, comment='限价（LIMIT相关订单必需）')
+        stopPrice = Column(DECIMAL(20, 8), nullable=True, comment='触发价（触发类订单必需）')
+        trailingDelta = Column(BigInteger, nullable=True, comment='追踪止损步长（与stopPrice二选一）')
+        
+        # 可选字段
+        icebergQty = Column(DECIMAL(20, 8), nullable=True, comment='冰山单外显数量')
+        newClientOrderId = Column(VARCHAR(36), nullable=True, unique=True, comment='客户自定义订单ID')
+        newOrderRespType = Column(Enum('ACK', 'RESULT', 'FULL', name='order_resp_type_enum'), 
+                                 nullable=True, default='ACK', comment='返回内容级别')
+        selfTradePreventionMode = Column(Enum('EXPIRE_TAKER', 'EXPIRE_MAKER', 'EXPIRE_BOTH', 
+                                            name='self_trade_prevention_enum'), 
+                                       nullable=True, comment='自成交防护模式')
+        strategyId = Column(BigInteger, nullable=True, comment='策略标识')
+        strategyType = Column(Integer, nullable=True, comment='策略类型')
+        recvWindow = Column(BigInteger, nullable=True, comment='接收窗口时间')
+        
+        # 系统字段
+        timestamp = Column(BigInteger, nullable=False, comment='请求时间戳（毫秒）')
+        
+        # 订单状态追踪字段
+        order_id = Column(BigInteger, nullable=True, comment='交易所返回的订单ID')
+        client_order_id = Column(VARCHAR(36), nullable=True, comment='实际使用的客户端订单ID')
+        order_status = Column(Enum('NEW', 'PARTIALLY_FILLED', 'FILLED', 'CANCELED', 'PENDING_CANCEL', 
+                                  'REJECTED', 'EXPIRED', name='order_status_enum'), 
+                             nullable=True, comment='订单状态')
+        executed_qty = Column(DECIMAL(20, 8), nullable=True, default=0, comment='已成交数量')
+        cummulative_quote_qty = Column(DECIMAL(20, 8), nullable=True, default=0, comment='累计成交金额')
+        
+        # 系统管理字段
+        is_test_order = Column(Boolean, nullable=False, default=False, comment='是否为测试订单')
+        error_code = Column(Integer, nullable=True, comment='错误代码（如果有）')
+        error_msg = Column(Text, nullable=True, comment='错误信息（如果有）')
+        
+        # 时间戳字段
+        created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), comment='记录创建时间')
+        updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), 
+                           onupdate=func.now(), comment='记录更新时间')
+        order_time = Column(TIMESTAMP(timezone=True), nullable=True, comment='订单时间（交易所时间）')
+        
+        # 创建索引
+        __table_args__ = (
+            # 复合索引用于查询优化
+            {'comment': 'Binance 订单表，存储所有订单请求和响应数据'}
+        )
+    
     Base.metadata.create_all(engine)
-    logging.info("[Database] Order table initialized successfully.")
+    logging.info("[Database] Order table initialized successfully with full Binance API compliance.")
 
 def InitializingFetcherQueueTable():
     """
@@ -746,23 +790,117 @@ class ExchangeDataFetcherQueueSettings:
 fetcher_queue_manager = ExchangeDataFetcherQueueSettings()
 
 # 存储订单信息
-def insert_order(session, table, symbol, side, price, quantity):
+def insert_order_Binance(session, table, order_data):
     """
-    插入订单数据，id为自定义格式（字符串）
-    有两个bool类型字段，分别表示订单是否完成和是否读取
-    默认值为False
+    插入订单数据，支持完整的 Binance API 字段
+    
+    Args:
+        session: SQLAlchemy session
+        table: 订单表对象
+        order_data: 包含订单数据的字典，支持以下字段：
+            必填: symbol, side, type, timestamp
+            条件必填: timeInForce, quantity, quoteOrderQty, price, stopPrice, trailingDelta
+            可选: icebergQty, newClientOrderId, newOrderRespType, selfTradePreventionMode,
+                  strategyId, strategyType, recvWindow, is_test_order 等
+    
+    Returns:
+        str: 生成的订单UUID
     """
-    custom_id = generate_custom_id(session, table)
-    order_entry = table.insert().values(
-        id=custom_id,
-        symbol=symbol,
-        side=side,
-        price=price,
-        quantity=quantity,
-        statusdone=False,
-        statusreade=False,
-        timestamp=datetime.now(timezone.utc)
-    )
-    session.execute(order_entry)
-    session.commit()
-    return custom_id
+    from sqlalchemy.dialects.postgresql import insert
+    
+    # 设置默认值
+    order_entry_data = {
+        'symbol': order_data.get('symbol'),
+        'side': order_data.get('side'),
+        'type': order_data.get('type'),
+        'timeInForce': order_data.get('timeInForce'),
+        'quantity': order_data.get('quantity'),
+        'quoteOrderQty': order_data.get('quoteOrderQty'),
+        'price': order_data.get('price'),
+        'stopPrice': order_data.get('stopPrice'),
+        'trailingDelta': order_data.get('trailingDelta'),
+        'icebergQty': order_data.get('icebergQty'),
+        'newClientOrderId': order_data.get('newClientOrderId'),
+        'newOrderRespType': order_data.get('newOrderRespType', 'ACK'),
+        'selfTradePreventionMode': order_data.get('selfTradePreventionMode'),
+        'strategyId': order_data.get('strategyId'),
+        'strategyType': order_data.get('strategyType'),
+        'recvWindow': order_data.get('recvWindow'),
+        'timestamp': order_data.get('timestamp', int(datetime.now(timezone.utc).timestamp() * 1000)),
+        'order_id': order_data.get('order_id'),
+        'client_order_id': order_data.get('client_order_id'),
+        'order_status': order_data.get('order_status', 'NEW'),
+        'executed_qty': order_data.get('executed_qty', 0),
+        'cummulative_quote_qty': order_data.get('cummulative_quote_qty', 0),
+        'is_test_order': order_data.get('is_test_order', False),
+        'error_code': order_data.get('error_code'),
+        'error_msg': order_data.get('error_msg'),
+        'order_time': order_data.get('order_time')
+    }
+    
+    # 移除 None 值
+    order_entry_data = {k: v for k, v in order_entry_data.items() if v is not None}
+    
+    try:
+        # 使用 PostgreSQL 的 ON CONFLICT DO UPDATE 语法进行 UPSERT（如果需要）
+        stmt = insert(table).values(**order_entry_data)
+        
+        # 如果有客户端订单ID冲突，则更新记录
+        if 'newClientOrderId' in order_entry_data and order_entry_data['newClientOrderId']:
+            update_dict = {key: stmt.excluded[key] for key in order_entry_data.keys() 
+                          if key not in ['id', 'created_at']}
+            stmt = stmt.on_conflict_do_update(
+                index_elements=['newClientOrderId'],
+                set_=update_dict
+            )
+        
+        result = session.execute(stmt)
+        session.commit()
+        
+        # 获取插入的记录ID
+        if hasattr(result, 'inserted_primary_key') and result.inserted_primary_key:
+            order_id = result.inserted_primary_key[0]
+        else:
+            # 如果是更新操作，通过客户端订单ID查询
+            if 'newClientOrderId' in order_entry_data:
+                from sqlalchemy import select
+                stmt = select(table.c.id).where(table.c.newClientOrderId == order_entry_data['newClientOrderId'])
+                order_id = session.execute(stmt).scalar()
+            else:
+                order_id = None
+        
+        logging.info(f"[Database] 订单数据插入/更新成功: {order_entry_data.get('symbol')} - {order_entry_data.get('side')}")
+        return str(order_id) if order_id else None
+        
+    except Exception as e:
+        logging.error(f"[Database] 订单数据插入失败: {e}", exc_info=True)
+        session.rollback()
+        return None
+
+def change_order_Binance(session, table, order_id, update_data):
+    """
+    更新订单数据，支持完整的 Binance API 字段
+
+    Args:
+        session: SQLAlchemy session
+        table: 订单表对象
+        order_id: 订单ID
+        update_data: 包含更新数据的字典，支持以下字段：
+            可选: symbol, side, type, timestamp
+            条件可选: timeInForce, quantity, quoteOrderQty, price, stopPrice, trailingDelta
+            可选: icebergQty, newClientOrderId, newOrderRespType, selfTradePreventionMode,
+                  strategyId, strategyType, recvWindow, is_test_order 等
+
+    Returns:
+        bool: 更新是否成功
+    """
+    try:
+        stmt = table.update().where(table.c.id == order_id).values(**update_data)
+        session.execute(stmt)
+        session.commit()
+        logging.info(f"[Database] 订单数据更新成功: {order_id}")
+        return True
+    except Exception as e:
+        logging.error(f"[Database] 订单数据更新失败: {e}", exc_info=True)
+        session.rollback()
+        return False
