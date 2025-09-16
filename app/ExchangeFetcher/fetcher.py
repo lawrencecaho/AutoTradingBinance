@@ -5,11 +5,16 @@ import requests
 import select
 import sys
 import time
+import logging
 import json
 import asyncio
 import websockets
 from datetime import datetime, timezone
 from config import BINANCE_API_BASE_URL, DEFAULT_SYMBOL
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 from DatabaseOperator.pg_operator import Session, engine, init_db, insert_price, insert_kline
 from DataProcessingCalculator.DataModificationModule import parse_kline
 
@@ -46,7 +51,7 @@ def fetch_price(SYMBOL, Price, session=None):
 # K Line
 # 需要(symbol, interval, dbr=False, session=None, table=None,startTime=None, endTime=None, limit=100)
 def get_kline(symbol, interval, dbr, session, table=None,
-              startTime=None, endTime=None, limit=100):
+              startTime=None, endTime=None, limit=100, auto_commit=False):
     """
     获取 Binance K 线数据，并可选择写入数据库。
 
@@ -59,6 +64,7 @@ def get_kline(symbol, interval, dbr, session, table=None,
         startTime  - 开始时间（Unix 毫秒）
         endTime    - 结束时间（Unix 毫秒）
         limit      - 获取数量，最大 1000
+        auto_commit - 是否自动提交每次写入（默认False）
 
     返回：
         kline_data - 原始 K 线数据列表
@@ -96,6 +102,10 @@ def get_kline(symbol, interval, dbr, session, table=None,
                     continue
 
                 insert_kline(session, table, symbol.upper(), parsed_kline)
+                
+                # 自动提交选项：立即提交使数据对其他连接可见
+                if auto_commit:
+                    session.commit()
 
         return [parse_kline(k) for k in kline_data]
 
@@ -105,7 +115,7 @@ def get_kline(symbol, interval, dbr, session, table=None,
 
 # WebSocket K Line - WebSocket版本的get_kline
 async def get_kline_websocket(symbol, interval, dbr=False, session=None, table=None, 
-                             callback=None, max_klines=None, auto_reconnect=True):
+                             callback=None, max_klines=None, auto_reconnect=True, auto_commit=False):
     """
     通过WebSocket获取 Binance K 线数据，并可选择写入数据库。
     这是get_kline函数的WebSocket实时版本。
@@ -119,6 +129,7 @@ async def get_kline_websocket(symbol, interval, dbr=False, session=None, table=N
         callback        - 回调函数，接收每个K线数据
         max_klines      - 最大接收K线数量（None表示无限制）
         auto_reconnect  - 是否自动重连（默认True）
+        auto_commit     - 是否自动提交每次写入（默认False，推荐实时场景使用True）
 
     返回：
         kline_data_list - 接收到的解析后K线数据列表
@@ -199,16 +210,23 @@ async def get_kline_websocket(symbol, interval, dbr=False, session=None, table=N
                             if callback:
                                 callback(parsed_kline)
                             
-                            # 数据库写入（为了测试，暂时允许未完结的K线也入库）
+                            # 数据库写入（为了测试，暂时允许未完结的K线也入库）(哪有完结的K线，不然实时数据都没法存了)
                             if dbr and session is not None:
                                 try:
                                     insert_kline(session, table, symbol.upper(), parsed_kline)
+                                    
+                                    # 自动提交选项：立即提交使数据对其他连接可见
+                                    if auto_commit:
+                                        session.commit()
+                                        
                                     if parsed_kline['is_closed']:
                                         print(f"[WebSocket] 已保存完结K线到数据库: {symbol} {interval}")
                                     else:
                                         print(f"[WebSocket] 已保存实时K线到数据库: {symbol} {interval} (未完结)")
                                 except Exception as db_error:
                                     print(f"[WebSocket] 数据库写入错误: {db_error}")
+                                    if auto_commit:
+                                        session.rollback()  # 自动提交模式下需要回滚
                                     # 注意：不要在这里调用session.rollback()，因为session可能来自外部
                             
                             # 检查是否达到最大K线数量
@@ -250,7 +268,7 @@ async def get_kline_websocket(symbol, interval, dbr=False, session=None, table=N
 
 
 def start_kline_websocket_sync(symbol, interval, dbr=False, session=None, table=None, 
-                              callback=None, max_klines=None):
+                              callback=None, max_klines=None, auto_commit=False):
     """
     get_kline_websocket的同步包装函数，方便在非异步环境中使用
     
@@ -266,7 +284,8 @@ def start_kline_websocket_sync(symbol, interval, dbr=False, session=None, table=
         session=session,
         table=table,
         callback=callback,
-        max_klines=max_klines
+        max_klines=max_klines,
+        auto_commit=auto_commit
     ))
 
 

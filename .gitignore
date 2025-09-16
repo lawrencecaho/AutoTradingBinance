@@ -85,7 +85,7 @@ coverage.xml
 test_*.py
 *examples.py
 *example.py
-
+demo*.py
 # ====================
 # 项目特定的临时/测试文件
 # ====================
