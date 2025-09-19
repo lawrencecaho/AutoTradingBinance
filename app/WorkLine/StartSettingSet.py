@@ -14,29 +14,10 @@ if str(app_dir) not in sys.path:
 from PathUniti import APP_DIR, get_log_file
 from DatabaseOperator.pg_operator import Session, engine
 from DatabaseOperator.redis_operator import RedisClient
-
-# 简化的日志配置
-def setup_logging():
-    """配置日志记录"""
-    # 获取日志文件路径
-    log_file = get_log_file('StartSettingSet.log')
-    
-    # 配置根日志记录器
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler()  # 同时输出到控制台
-        ]
-    )
-
-# 设置日志
-setup_logging()
+from config.logging_config import get_logger
 
 # 获取日志记录器
-logger = logging.getLogger()
+logger = get_logger(__name__)
 
 def Get_worklist():
     # 引入 RedisClient

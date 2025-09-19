@@ -12,8 +12,10 @@ import websockets
 from datetime import datetime, timezone
 from config import BINANCE_API_BASE_URL, DEFAULT_SYMBOL
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from config import quick_setup, get_logger
+quick_setup()
+logger = get_logger()
+logger.info("开始使用新的日志配置！")
 
 from DatabaseOperator.pg_operator import Session, engine, init_db, insert_price, insert_kline
 from DataProcessingCalculator.DataModificationModule import parse_kline
@@ -38,13 +40,11 @@ def fetch_price(SYMBOL, Price, session=None):
         # 只有提供session时才存储到数据库
         if session is not None and Price is not None:
             custom_id = insert_price(session, Price, symbol, price, datetime.now(timezone.utc))
-            print(f"[Fetcher] Stored price: {price}, id: {custom_id}")
-        else:
-            print(f"[Fetcher] Price fetched: {price} (not stored)")
-            
+            logger.debug(f"Stored price: {price}, id: {custom_id}")
+        
         return price
     except Exception as e:
-        print(f"[Fetcher] Error: {e}")
+        logger.error(f"Failed to fetch price for {SYMBOL}: {e}")
         return None
 
 
@@ -110,7 +110,7 @@ def get_kline(symbol, interval, dbr, session, table=None,
         return [parse_kline(k) for k in kline_data]
 
     except requests.RequestException as e:
-        print(f"[错误] 请求失败: {e}")
+        logger.error(f"Failed to fetch klines for {symbol} {interval}: {e}")
         return []
 
 # WebSocket K Line - WebSocket版本的get_kline
@@ -153,7 +153,7 @@ async def get_kline_websocket(symbol, interval, dbr=False, session=None, table=N
             from DatabaseOperator.pg_operator import create_kline_table_if_not_exists
             table = create_kline_table_if_not_exists(engine, symbol.upper())
     
-    print(f"[WebSocket] 连接到 {symbol} {interval} K线流...")
+    logger.info(f"Starting WebSocket connection for {symbol} {interval} klines")
     
     while reconnect_count <= max_reconnect_attempts:
         try:
@@ -163,7 +163,7 @@ async def get_kline_websocket(symbol, interval, dbr=False, session=None, table=N
                 ping_timeout=10,
                 close_timeout=10
             ) as websocket:
-                print(f"[WebSocket] 成功连接 {symbol} {interval} K线数据流")
+                logger.info(f"Successfully connected to {symbol} {interval} kline stream")
                 reconnect_count = 0  # 重置重连计数
                 
                 async for message in websocket:
@@ -219,51 +219,46 @@ async def get_kline_websocket(symbol, interval, dbr=False, session=None, table=N
                                     if auto_commit:
                                         session.commit()
                                         
-                                    if parsed_kline['is_closed']:
-                                        print(f"[WebSocket] 已保存完结K线到数据库: {symbol} {interval}")
-                                    else:
-                                        print(f"[WebSocket] 已保存实时K线到数据库: {symbol} {interval} (未完结)")
                                 except Exception as db_error:
-                                    print(f"[WebSocket] 数据库写入错误: {db_error}")
+                                    logger.error(f"Database write error for {symbol}: {db_error}")
                                     if auto_commit:
                                         session.rollback()  # 自动提交模式下需要回滚
-                                    # 注意：不要在这里调用session.rollback()，因为session可能来自外部
                             
                             # 检查是否达到最大K线数量
                             if max_klines and kline_count >= max_klines:
-                                print(f"[WebSocket] 已接收 {max_klines} 个K线，停止接收")
+                                logger.info(f"Received {max_klines} klines for {symbol}, stopping")
                                 return kline_data_list
                         
                     except json.JSONDecodeError as e:
-                        print(f"[WebSocket] JSON解析错误: {e}")
+                        logger.error(f"JSON decode error: {e}")
                         continue
                     except Exception as e:
-                        print(f"[WebSocket] 数据处理错误: {e}")
+                        logger.error(f"Data processing error: {e}")
                         continue
                         
         except websockets.exceptions.ConnectionClosed as e:
-            print(f"[WebSocket] 连接关闭: {e}")
+            logger.warning(f"WebSocket connection closed: {e}")
             if auto_reconnect and reconnect_count < max_reconnect_attempts:
                 reconnect_count += 1
                 wait_time = min(2 ** reconnect_count, 30)  # 指数退避
-                print(f"[WebSocket] {wait_time}秒后尝试重连 (第{reconnect_count}次)")
+                logger.info(f"Attempting reconnection #{reconnect_count} in {wait_time}s")
                 await asyncio.sleep(wait_time)
             else:
-                print(f"[WebSocket] 停止重连")
+                logger.info("Stopping reconnection attempts")
                 break
                 
         except Exception as e:
-            print(f"[WebSocket] 连接错误: {e}")
+            logger.error(f"WebSocket connection error: {e}")
             if auto_reconnect and reconnect_count < max_reconnect_attempts:
                 reconnect_count += 1
                 wait_time = min(2 ** reconnect_count, 30)
-                print(f"[WebSocket] {wait_time}秒后尝试重连 (第{reconnect_count}次)")
+                logger.info(f"Attempting reconnection #{reconnect_count} in {wait_time}s")
                 await asyncio.sleep(wait_time)
             else:
-                print(f"[WebSocket] 停止重连")
+                logger.info("Stopping reconnection attempts")
                 break
     
-    print(f"[WebSocket] 总共接收了 {len(kline_data_list)} 个K线数据")
+    logger.info(f"WebSocket session completed: received {len(kline_data_list)} klines for {symbol}")
     return kline_data_list
 
 
@@ -296,12 +291,10 @@ async def example_websocket_kline_usage():
     """
     def kline_callback(kline_data):
         """处理接收到的K线数据的回调函数"""
-        print(f"接收到K线数据: {kline_data['symbol']} {kline_data['interval']}")
-        print(f"  开盘价: {kline_data['open']}, 收盘价: {kline_data['close']}")
-        print(f"  成交量: {kline_data['volume']}, K线完结: {kline_data['is_closed']}")
+        logger.info(f"Received kline: {kline_data['symbol']} {kline_data['interval']} - Close: {kline_data['close']}, Volume: {kline_data['volume']}, Closed: {kline_data['is_closed']}")
     
     # 示例1: 只接收数据不入库
-    print("示例1: 获取BTC 1分钟K线数据(不入库)")
+    logger.info("Example 1: Getting BTC 1m klines (no database)")
     klines = await get_kline_websocket(
         symbol="BTCUSDT",
         interval="1m", 
@@ -311,7 +304,7 @@ async def example_websocket_kline_usage():
     )
     
     # 示例2: 接收数据并入库（推荐的会话管理方式）
-    print("示例2: 获取ETH 1分钟K线数据并入库")
+    logger.info("Example 2: Getting ETH 1m klines with database")
     from DatabaseOperator import get_db_session
     try:
         with get_db_session() as session:
@@ -324,6 +317,6 @@ async def example_websocket_kline_usage():
                 callback=kline_callback
             )
     except Exception as e:
-        print(f"数据库操作错误: {e}")
+        logger.error(f"Database operation error: {e}")
     
     return klines

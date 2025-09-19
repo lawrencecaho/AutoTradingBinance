@@ -370,10 +370,12 @@ def main():
     """
     用于测试调用的主函数。
     """
-    logging.basicConfig(level=logging.INFO, 
-                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                        handlers=[logging.StreamHandler()]) # Ensure logs go to console
-    logger = logging.getLogger(__name__) # Get logger for main
+    from config.logging_config import setup_logging, get_logger
+    
+    # 设置统一的日志配置
+    setup_logging()
+    logger = get_logger(__name__)
+    
     logger.info("开始执行 DataAnalyze.py 的 main 函数...")
     
     logger.info("调用 StartCaculateMACD() (主要用于MACD计算)...")

@@ -15,29 +15,10 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import logging
-import logging.config
+from config.logging_config import get_logger
 
-# 配置日志
-def setup_logger():
-    """设置日志配置"""
-    log_dir = Path(__file__).parent.parent / 'logs'
-    log_dir.mkdir(exist_ok=True)
-    
-    log_file = log_dir / 'authtotp.log'
-    
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
-        ],
-        force=True
-    )
-    return logging.getLogger(__name__)
-
-# 初始化logger
-logger = setup_logger()
+# 获取日志记录器
+logger = get_logger(__name__)
 
 def generate_totp_secret():
     """生成新的 TOTP 密钥"""
