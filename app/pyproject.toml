@@ -1,5 +1,5 @@
 [project]
-name = "app"
+name = "AnalyzeTrading"
 version = "0.1.0"
 description = "AutoTradingService"
 readme = "README.md"

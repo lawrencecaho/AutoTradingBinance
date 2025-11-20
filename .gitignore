@@ -116,3 +116,4 @@ app/verify_websocket_db.py
 app/check_database_modules.py
 app/examples/
 *sample*.py
+.obsidian/

@@ -2,7 +2,7 @@
 
 ## 📊 概述
 
-成功将 `ExchangeDataFetcherQueueSettings` 从 Redis 迁移到 PostgreSQL，并创建了完整的REST API接口用于队列配置管理。
+ `ExchangeDataFetcherQueueSettings` 便捷名称 `EDFQS` 使用 PostgreSQL，并创建了完整的REST API接口用于队列配置管理。
 
 ## 🗃️ 数据库设计
 
@@ -35,7 +35,7 @@ CREATE TABLE fetcher_queue_configs (
 ## 🔌 API 端点
 
 ### 基础信息
-- **基础路径**: `/api/queue`
+- **基础路径**: `/api/queue/edfqs` (EDFQS = Exchange Data Fetcher Queue Settings)
 - **认证**: 需要安全头部验证
 - **加密**: 所有请求和响应都使用混合加密
 
@@ -43,7 +43,7 @@ CREATE TABLE fetcher_queue_configs (
 
 #### 1. 获取所有队列配置
 ```
-GET /api/queue/list?active_only=true
+GET /api/queue/edfqs/list?active_only=true
 ```
 - **查询参数**:
   - `active_only` (boolean): 是否只返回激活的队列，默认 true
@@ -51,11 +51,52 @@ GET /api/queue/list?active_only=true
 
 #### 2. 获取特定队列配置
 ```
-GET /api/queue/{queue_name}
+GET /api/queue/edfqs/{queue_name}
 ```
 - **路径参数**:
   - `queue_name`: 队列名称
 - **响应**: 加密的队列配置信息
+
+#### 3. 创建新队列配置
+```
+POST /api/queue/edfqs/create
+```
+- **请求体**: 加密的队列配置数据
+- **字段**:
+  - `queue_name` (必填): 队列名称
+  - `symbol` (必填): 交易对符号
+  - `interval` (必填): K线周期
+  - `exchange` (可选): 交易所名称，默认 "binance"
+  - `description` (可选): 描述信息
+- **安全规则**: 创建的队列默认为不激活状态，前端无法在创建时指定激活状态
+
+#### 4. 更新队列配置
+```
+PUT /api/queue/edfqs/{queue_name}
+```
+- **业务规则**:
+  - 激活状态的队列只能修改 `queue_name` 和 `description`
+  - 非激活状态的队列可以修改除ID外的所有字段
+
+#### 5. 激活队列
+```
+POST /api/queue/edfqs/{queue_name}/activate
+```
+
+#### 6. 停用队列
+```
+POST /api/queue/edfqs/{queue_name}/deactivate
+```
+
+#### 7. 删除队列配置
+```
+DELETE /api/queue/edfqs/{queue_name}/delete
+```
+- **业务规则**: 激活状态的队列不能删除
+
+### 向后兼容端点
+
+为了向后兼容，系统还提供了简化路径的端点：
 
 #### 3. 创建新队列配置
 ```
