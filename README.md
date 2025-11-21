@@ -1,6 +1,18 @@
-# PostgreSQL兼容的加密通信系统
+# AutoTradingBinance - 币安自动交易系统
 
-本项目实现了一个基于FastAPI的安全API后端与Next.js前端，提供RSA加密通信、OTP认证和JWT授权功能。系统已针对PostgreSQL进行优化，使用SQLAlchemy Core进行数据库操作。
+本项目是一个基于 Python 的币安（Binance）加密货币自动交易系统，实现了安全的 FastAPI 后端、数据采集、策略分析和交易执行等完整功能。系统提供 RSA 加密通信、OTP 认证和 JWT 授权，已针对 PostgreSQL 进行优化。
+
+## 📖 项目文档
+
+- **[PROJECT_OVERVIEW.md](./PROJECT_OVERVIEW.md)** - 📚 完整的项目概览和主要程序详解
+- **[QUICK_REFERENCE.md](./QUICK_REFERENCE.md)** - ⚡ 快速参考指南和 30 秒启动
+- **[SECURITY_FIX_REPORT.md](./SECURITY_FIX_REPORT.md)** - 🔒 安全修复报告
+
+---
+
+## PostgreSQL兼容的加密通信系统
+
+本系统基于 FastAPI 的安全 API 后端与 Next.js 前端，提供 RSA 加密通信、OTP 认证和 JWT 授权功能。系统已针对 PostgreSQL 进行优化，使用 SQLAlchemy Core 进行数据库操作。
 
 ## 主要功能
 
